@@ -1693,16 +1693,24 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const activeFieldZoom = farFieldView ? fieldZoom : 1
   const baseVerticalExtent = Math.max(9.5, (config.sourceCount - 1) * config.spacing / 2 + 0.9)
   const verticalExtent = baseVerticalExtent * activeFieldZoom
-  const fieldEndX = farFieldView ? config.screenDistance * activeFieldZoom : config.screenDistance
-  const worldMaxX = farFieldView ? Math.max(24.5, fieldEndX + 2.5) : 24.5
-  const world = { minX: -6.5, maxX: worldMaxX, minY: -verticalExtent, maxY: verticalExtent }
   const padding = 18
+  const worldMinX = -6.5
+  const requestedFieldEndX = farFieldView ? config.screenDistance * activeFieldZoom : config.screenDistance
+  const baseWorldMaxX = farFieldView ? Math.max(24.5, requestedFieldEndX + 2.5) : 24.5
+  const horizontalDrawingWidth = farFieldView ? width : width - padding * 2
   const scale = Math.min(
-    (width - padding * 2) / (world.maxX - world.minX),
-    (height - padding * 2) / (world.maxY - world.minY),
+    horizontalDrawingWidth / (baseWorldMaxX - worldMinX),
+    (height - padding * 2) / (verticalExtent * 2),
   )
+  const worldMaxX = farFieldView
+    ? Math.max(baseWorldMaxX, worldMinX + width / scale)
+    : baseWorldMaxX
+  const world = { minX: worldMinX, maxX: worldMaxX, minY: -verticalExtent, maxY: verticalExtent }
+  const fieldEndX = farFieldView ? worldMaxX : config.screenDistance
   const contentWidth = (world.maxX - world.minX) * scale
-  const originX = (width - contentWidth) / 2 - world.minX * scale
+  const originX = farFieldView
+    ? -world.minX * scale
+    : (width - contentWidth) / 2 - world.minX * scale
   const centreY = height / 2
   const toX = (value) => originX + value * scale
   const toY = (value) => centreY - value * scale
@@ -2491,7 +2499,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
       )}
       <span className="field-scale-note">
         {farFieldView && fieldZoom > 1
-          ? "View extends to " + fieldZoom + "D · screen remains at D"
+          ? fieldZoom + "× view · screen remains at D"
           : viewMode === 'principal-orders' ? "Hover a slit to trace all of its moving crests" : viewMode === 'intensity' ? "Intensity heatmap · bright = stronger superposition" : viewMode === 'instantaneous' ? "Displacement now · hue = direction · brightness = magnitude" : "Dynamically similar wave model · no magnified inset"}
       </span>
     </div>
