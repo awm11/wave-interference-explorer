@@ -2254,8 +2254,6 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           <g
             key={index}
             className={sourceHoverEnabled && hoveredSource === index ? 'source-trace-active' : undefined}
-            onMouseEnter={sourceHoverEnabled ? () => setHoveredSource(index) : undefined}
-            onMouseLeave={sourceHoverEnabled ? () => setHoveredSource(null) : undefined}
           >
             <circle
               className="field-source"
@@ -2272,20 +2270,6 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
               >
                 {index + 1}
               </text>
-            )}
-            {sourceHoverEnabled && (
-              <circle
-                className="source-hover-target"
-                cx={barrierX + 2}
-                cy={toY(sourceY)}
-                r="11"
-                tabIndex="0"
-                role="button"
-                aria-label={'Highlight every moving crest from slit ' + (index + 1)}
-                onFocus={() => setHoveredSource(index)}
-                onBlur={() => setHoveredSource(null)}
-                onClick={(event) => event.stopPropagation()}
-              />
             )}
           </g>
         ))}
@@ -2352,6 +2336,28 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
                 aligned crests · n = {activeOrder > 0 ? '+' : ''}{activeOrder}
               </text>
             )}
+          </g>
+        )}
+
+        {sourceHoverEnabled && (
+          <g className="source-hover-targets">
+            {sourcePositions.map((sourceY, index) => (
+              <circle
+                key={index}
+                className="source-hover-target"
+                cx={barrierX + 2}
+                cy={toY(sourceY)}
+                r={viewMode === 'principal-orders' ? 15 : 11}
+                tabIndex="0"
+                role="button"
+                aria-label={'Highlight every moving crest from slit ' + (index + 1)}
+                onMouseEnter={() => setHoveredSource(index)}
+                onMouseLeave={() => setHoveredSource(null)}
+                onFocus={() => setHoveredSource(index)}
+                onBlur={() => setHoveredSource(null)}
+                onClick={(event) => event.stopPropagation()}
+              />
+            ))}
           </g>
         )}
 
