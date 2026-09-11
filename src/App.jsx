@@ -1683,6 +1683,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const sourceHoverEnabled = viewMode === 'principal-orders' || viewMode === 'wavefronts'
   const width = 900
   const height = 510
+  const screenlessGrating = config.kind !== 'double-slit'
   const farFieldView = config.kind !== 'double-slit' && (viewMode === 'instantaneous' || viewMode === 'intensity')
   const activeFieldZoom = farFieldView ? fieldZoom : 1
   const baseVerticalExtent = Math.max(9.5, (config.sourceCount - 1) * config.spacing / 2 + 0.9)
@@ -1700,7 +1701,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     ? Math.max(baseWorldMaxX, worldMinX + width / scale)
     : baseWorldMaxX
   const world = { minX: worldMinX, maxX: worldMaxX, minY: -verticalExtent, maxY: verticalExtent }
-  const fieldEndX = farFieldView ? worldMaxX : config.screenDistance
+  const fieldEndX = farFieldView || screenlessGrating ? worldMaxX : config.screenDistance
   const contentWidth = (world.maxX - world.minX) * scale
   const originX = farFieldView
     ? -world.minX * scale
@@ -1715,11 +1716,11 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const screenTop = toY(screenHalfHeight)
   const screenBottom = toY(-screenHalfHeight)
   const screenHeight = screenBottom - screenTop
-  const showObservationScreen = !farFieldView || activeFieldZoom === 1
+  const showObservationScreen = !screenlessGrating
   const wavelengthPixels = config.wavelength * scale
   const phaseFrontSpacing = wavelengthPixels / 2
   const frontCount = Math.ceil((-world.minX * scale) / phaseFrontSpacing) + 2
-  const maximumRadius = Math.hypot(config.screenDistance, screenHalfHeight + 8) * scale
+  const maximumRadius = Math.hypot(screenlessGrating ? worldMaxX : config.screenDistance, screenHalfHeight + 8) * scale
   const ringCount = Math.ceil(maximumRadius / phaseFrontSpacing) + 2
   const sourcePositions = Array.from({ length: config.sourceCount }, (_, index) => (
     (index - (config.sourceCount - 1) / 2) * config.spacing
@@ -1824,7 +1825,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
 
       context.save()
       context.beginPath()
-      context.rect(barrierX - 0.5, 0, Math.max(0, screenX - barrierX - 4.5), height)
+      context.rect(barrierX - 0.5, 0, Math.max(0, fieldEndScreenX - barrierX - 4.5), height)
       context.clip()
       context.lineWidth = 1.25
       sourcePositions.forEach((sourceY, sourceIndex) => {
@@ -1889,7 +1890,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
 
         context.save()
         context.beginPath()
-        context.rect(barrierX + 2, 0, Math.max(0, screenX - barrierX - 4), height)
+        context.rect(barrierX + 2, 0, Math.max(0, fieldEndScreenX - barrierX - 4), height)
         context.clip()
         for (let crestNumber = firstCrestNumber; crestNumber <= lastCrestNumber; crestNumber += 1) {
           const projection = referenceProjection + travelWorld + crestNumber * config.wavelength
@@ -2118,10 +2119,35 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     if (localX < 0 || localX > renderedWidth || localY < 0 || localY > renderedHeight) return
     const x = (localX / renderedWidth) * width
     const y = (localY / renderedHeight) * height
-    const selectableEndX = farFieldView ? fieldEndScreenX : screenX
+    const selectableEndX = screenlessGrating ? fieldEndScreenX : screenX
     if (x <= barrierX + 5 || x > selectableEndX + 8) return
+    if (viewMode === 'principal-orders') {
+      const nearestRay = principalOrderRays
+        .map((ray) => {
+          const startX = barrierX + 3
+          const startY = centreY
+          const endX = toX(ray.endX)
+          const endY = toY(ray.endY)
+          const deltaX = endX - startX
+          const deltaY = endY - startY
+          const lengthSquared = deltaX * deltaX + deltaY * deltaY
+          const fraction = lengthSquared < 1e-8
+            ? 0
+            : clamp(((x - startX) * deltaX + (y - startY) * deltaY) / lengthSquared, 0, 1)
+          const closestX = startX + fraction * deltaX
+          const closestY = startY + fraction * deltaY
+          return { order: ray.order, distance: Math.hypot(x - closestX, y - closestY) }
+        })
+        .sort((first, second) => first.distance - second.distance)[0]
+      if (nearestRay?.distance <= 18) onSelectOrder?.(nearestRay.order)
+      return
+    }
     const horizontalDistance = (x - barrierX) / scale
-    const verticalDistance = (centreY - y) / scale
+    const clickedWorldY = (centreY - y) / scale
+    const selectionOriginY = screenlessGrating && viewMode === 'wavefronts'
+      ? sourcePositions[Math.floor(config.sourceCount / 2)]
+      : 0
+    const verticalDistance = clickedWorldY - selectionOriginY
     const maximumAngle = Math.atan(screenHalfHeight / config.screenDistance)
     const chosenAngle = Math.atan2(verticalDistance, horizontalDistance)
     onSelect(config.kind === 'double-slit' ? clamp(chosenAngle, -maximumAngle, maximumAngle) : chosenAngle)
@@ -2134,11 +2160,31 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const selectedHitsScreen = selectedScreenPosition != null && Math.abs(selectedScreenPosition) <= screenHalfHeight
   const selectedMarkerOnScreen = showObservationScreen && selectedHitsScreen
   const selectedTangent = selectedAngle == null ? 0 : Math.tan(selectedAngle)
-  const selectedRayLimitX = farFieldView ? fieldEndX : config.screenDistance
+  const selectedRayLimitX = screenlessGrating ? fieldEndX : config.screenDistance
   const selectedRayEndX = selectedAngle == null || Math.abs(selectedTangent) < 1e-8
     ? selectedRayLimitX
     : Math.min(selectedRayLimitX, (verticalExtent - 0.5) / Math.abs(selectedTangent))
   const selectedRayEndY = selectedRayEndX * selectedTangent
+  const primarySelectedSourceIndex = Math.floor(config.sourceCount / 2)
+  const selectedWavefrontRays = screenlessGrating && viewMode === 'wavefronts' && selectedAngle != null
+    ? sourcePositions.map((sourceY, sourceIndex) => {
+        const verticalLimit = verticalExtent - 0.5
+        const boundaryEndX = Math.abs(selectedTangent) < 1e-8
+          ? selectedRayLimitX
+          : selectedTangent > 0
+            ? (verticalLimit - sourceY) / selectedTangent
+            : (-verticalLimit - sourceY) / selectedTangent
+        const endX = clamp(Math.min(selectedRayLimitX, boundaryEndX), 0, selectedRayLimitX)
+        return {
+          sourceIndex,
+          sourceY,
+          endX,
+          endY: sourceY + endX * selectedTangent,
+          primary: sourceIndex === primarySelectedSourceIndex,
+        }
+      })
+    : []
+  const primarySelectedRay = selectedWavefrontRays.find((ray) => ray.primary)
   const selectedLocus = (() => {
     if (config.kind !== 'double-slit' || selectedAngle == null) return null
 
@@ -2195,10 +2241,14 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     const theta = Math.asin(order * config.wavelength / config.spacing)
     const tangent = Math.tan(theta)
     const screenPosition = config.screenDistance * tangent
-    const reachesScreen = Math.abs(screenPosition) <= screenHalfHeight
-    const endX = reachesScreen || Math.abs(tangent) < 1e-8
-      ? config.screenDistance
-      : screenHalfHeight / Math.abs(tangent)
+    const reachesScreen = !screenlessGrating && Math.abs(screenPosition) <= screenHalfHeight
+    const endX = screenlessGrating
+      ? (Math.abs(tangent) < 1e-8
+          ? world.maxX - 0.5
+          : Math.min(world.maxX - 0.5, (verticalExtent - 0.5) / Math.abs(tangent)))
+      : reachesScreen || Math.abs(tangent) < 1e-8
+        ? config.screenDistance
+        : screenHalfHeight / Math.abs(tangent)
     return { order, theta, endX, endY: endX * tangent, reachesScreen, screenPosition }
   })
   const activeRay = principalOrderRays.find((ray) => ray.order === activeOrder)
@@ -2215,7 +2265,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
         className="multi-field"
         viewBox={"0 0 " + width + " " + height}
         role="img"
-        aria-label={(viewMode === 'principal-orders' ? "Principal diffraction orders showing one cyan common wavefront travelling six wavelengths from the grating, with its contributing circular crests" : viewMode === 'intensity' ? "Interference intensity heatmap" : viewMode === 'instantaneous' ? "Instantaneous resultant displacement heatmap; colour shows direction and brightness shows magnitude" : "Crest and trough wavefront diagram") + ": wavelength, apertures, separation and screen distance all use the same relative units"}
+        aria-label={(viewMode === 'principal-orders' ? "Principal diffraction orders showing one cyan common wavefront travelling six wavelengths from the grating, with its contributing circular crests" : viewMode === 'intensity' ? "Interference intensity heatmap" : viewMode === 'instantaneous' ? "Instantaneous resultant displacement heatmap; colour shows direction and brightness shows magnitude" : "Crest and trough wavefront diagram") + (screenlessGrating ? ": angular diffraction field without an observation screen" : ": wavelength, apertures, separation and screen distance all use the same relative units")}
         onClick={choosePoint}
         style={{ '--wave-colour': '#66ddf3' }}
       >
@@ -2238,6 +2288,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             <rect x={barrierX + 4} y="0" width={Math.max(0, screenX - barrierX - 5)} height={height} />
           </clipPath>
         </defs>
+        <rect width={width} height={height} fill="transparent" />
         {viewMode !== 'principal-orders' && (
           <g className="field-grid">
             {gridXs.map((value) => <line key={"v" + value} x1={toX(value)} y1={toY(world.maxY)} x2={toX(value)} y2={toY(world.minY)} />)}
@@ -2297,7 +2348,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
                   y2={toY(ray.endY)}
                   tabIndex="0"
                   role="button"
-                  aria-label={'Select diffraction order ' + (ray.order > 0 ? '+' : '') + ray.order + (ray.reachesScreen ? '' : ', beyond the screen')}
+                  aria-label={'Select diffraction order ' + (ray.order > 0 ? '+' : '') + ray.order + (showObservationScreen && !ray.reachesScreen ? ', beyond the screen' : '')}
                   onClick={(event) => {
                     event.stopPropagation()
                     onSelectOrder?.(ray.order)
@@ -2310,7 +2361,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
                   }}
                 />
                 <line className="order-ray-visible" x1={barrierX + 3} y1={centreY} x2={toX(ray.endX)} y2={toY(ray.endY)} />
-                {ray.reachesScreen && (
+                {showObservationScreen && ray.reachesScreen && (
                   <circle
                     className="order-screen-target"
                     cx={screenX}
@@ -2395,13 +2446,24 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
                   </text>
                 </>
               )
+            ) : viewMode === 'wavefronts' ? (
+              selectedWavefrontRays.map((ray) => (
+                <line
+                  className={ray.primary ? 'selected-ray-primary' : 'selected-ray-secondary'}
+                  key={ray.sourceIndex}
+                  x1={barrierX + 3}
+                  y1={toY(ray.sourceY)}
+                  x2={toX(ray.endX)}
+                  y2={toY(ray.endY)}
+                />
+              ))
             ) : (
               <line x1={barrierX + 3} y1={centreY} x2={toX(selectedRayEndX)} y2={toY(selectedRayEndY)} />
             )}
             {selectedMarkerOnScreen && <circle cx={screenX} cy={selectedScreenY} r="7" />}
             <text
-              x={selectedMarkerOnScreen ? screenX - 12 : toX(selectedRayEndX) - 9}
-              y={selectedMarkerOnScreen ? selectedScreenY - 11 : toY(selectedRayEndY) + (selectedRayEndY >= 0 ? 15 : -9)}
+              x={selectedMarkerOnScreen ? screenX - 12 : toX(primarySelectedRay?.endX ?? selectedRayEndX) - 9}
+              y={selectedMarkerOnScreen ? selectedScreenY - 11 : toY(primarySelectedRay?.endY ?? selectedRayEndY) + ((primarySelectedRay?.endY ?? selectedRayEndY) >= 0 ? 15 : -9)}
               textAnchor="end"
             >
               {formatAngle(selectedAngle)}{showObservationScreen && !selectedHitsScreen ? ' · off screen' : ''}
@@ -2409,12 +2471,14 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </g>
         )}
 
-        <g className="scale-ruler">
-          <line x1={barrierX} y1={rulerY} x2={screenX} y2={rulerY} />
-          <line x1={barrierX} y1={rulerY - 6} x2={barrierX} y2={rulerY + 6} />
-          <line x1={screenX} y1={rulerY - 6} x2={screenX} y2={rulerY + 6} />
-          <text x={(barrierX + screenX) / 2} y={rulerY - 7} textAnchor="middle">D = {formatValue(config.screenDistance)} units</text>
-        </g>
+        {!screenlessGrating && (
+          <g className="scale-ruler">
+            <line x1={barrierX} y1={rulerY} x2={screenX} y2={rulerY} />
+            <line x1={barrierX} y1={rulerY - 6} x2={barrierX} y2={rulerY + 6} />
+            <line x1={screenX} y1={rulerY - 6} x2={screenX} y2={rulerY + 6} />
+            <text x={(barrierX + screenX) / 2} y={rulerY - 7} textAnchor="middle">D = {formatValue(config.screenDistance)} units</text>
+          </g>
+        )}
 
         <g className="wavelength-dimension">
           <line x1={wavelengthGuideX} y1={wavelengthGuideY} x2={wavelengthGuideX + wavelengthPixels} y2={wavelengthGuideY} />
@@ -2453,7 +2517,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
 
         <text className="field-caption" x={toX(world.minX) + 4} y={height - 5}>ONE GRID DIVISION = 1 RELATIVE UNIT</text>
         <text className="field-caption wavefront-note" x={toX(8.1)} y={height - 5}>
-          {viewMode === 'principal-orders' ? "ONE CYAN WAVEFRONT · TRACES 6λ FROM THE SLITS · GREEN = ITS CONTRIBUTING CIRCULAR CRESTS" : viewMode === 'intensity' ? "TIME-AVERAGED INTENSITY FROM EXACT PATH LENGTHS" : viewMode === 'instantaneous' ? "SIGNED DISPLACEMENT · BRIGHTNESS = MAGNITUDE · ANIMATED" : config.kind === 'double-slit' ? "λ, a, s, D AND SCREEN USE THE SAME SCALE" : "λ, a, d, D AND SCREEN USE THE SAME SCALE"}
+          {viewMode === 'principal-orders' ? "ONE CYAN WAVEFRONT · TRACES 6λ FROM THE SLITS · GREEN = ITS CONTRIBUTING CIRCULAR CRESTS" : viewMode === 'intensity' ? "TIME-AVERAGED INTENSITY FROM EXACT PATH LENGTHS" : viewMode === 'instantaneous' ? "SIGNED DISPLACEMENT · BRIGHTNESS = MAGNITUDE · ANIMATED" : config.kind === 'double-slit' ? "λ, a, s, D AND SCREEN USE THE SAME SCALE" : "λ, d AND THE WAVEFRONTS USE THE SAME RELATIVE SCALE"}
         </text>
       </svg>
       {viewMode === 'principal-orders' && (
@@ -2480,7 +2544,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
         </div>
       )}
       {farFieldView && (
-        <div className="field-zoom-picker" role="group" aria-label="Choose how far the field view extends beyond the observation screen">
+        <div className="field-zoom-picker" role="group" aria-label="Choose how far the field view extends from the grating">
           <span>Zoom out</span>
           {[1, 2, 4].map((zoom) => (
             <button
@@ -2496,15 +2560,15 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
         </div>
       )}
       <span className="field-scale-note">
-        {farFieldView && fieldZoom > 1
-          ? fieldZoom + "× view · screen hidden"
+        {farFieldView
+          ? fieldZoom + "× far-field view · no screen"
           : viewMode === 'principal-orders' ? "Hover a slit to trace all of its moving crests" : viewMode === 'intensity' ? "Intensity heatmap · bright = stronger superposition" : viewMode === 'instantaneous' ? "Displacement now · hue = direction · brightness = magnitude" : "Dynamically similar wave model · no magnified inset"}
       </span>
     </div>
   )
 }
 
-function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = null, expanded = false }) {
+function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = null, expanded = false, angularScale = false, snapToPrincipalOrders = false }) {
   const profileRef = useRef(null)
   const width = 720
   const height = expanded ? 340 : 270
@@ -2513,7 +2577,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
   const top = 20
   const bottom = height - 44
   const doubleSlit = config.kind === 'double-slit'
-  const halfRange = config.screenHalfHeight
+  const halfRange = angularScale ? 90 : config.screenHalfHeight
   const sampleCount = 1201
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const baseXValues = Array.from({ length: sampleCount }, (_, index) => -halfRange + (index / (sampleCount - 1)) * halfRange * 2)
@@ -2527,14 +2591,15 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
           const fractionalOrder = order + (sampleIndex - 12) / (6 * config.sourceCount)
           const sine = fractionalOrder * config.wavelength / config.spacing
           if (Math.abs(sine) >= 1) return null
-          const value = Math.tan(Math.asin(sine)) * config.screenDistance
+          const theta = Math.asin(sine)
+          const value = angularScale ? theta * 180 / Math.PI : Math.tan(theta) * config.screenDistance
           return Math.abs(value) <= halfRange ? value : null
         }))
         .filter((value) => value != null)
   const xValues = [...baseXValues, ...orderXValues]
     .sort((first, second) => first - second)
     .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 1e-8)
-  const thetaForX = (value) => Math.atan(value / config.screenDistance)
+  const thetaForX = (value) => angularScale ? value * Math.PI / 180 : Math.atan(value / config.screenDistance)
   const intensityValues = xValues.map((value) => interferenceIntensity(config, thetaForX(value)))
   const effectiveApertureWidth = doubleSlit ? config.slitWidth : Math.min(0.45, config.spacing * 0.3)
   const envelopeValues = xValues.map((value) => {
@@ -2567,7 +2632,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         const sine = order * config.wavelength / config.spacing
         if (Math.abs(sine) > 1) return null
         const theta = Math.asin(sine)
-        value = Math.tan(theta) * config.screenDistance
+        value = angularScale ? theta * 180 / Math.PI : Math.tan(theta) * config.screenDistance
       }
       return Math.abs(value) <= halfRange ? { order, value } : null
     })
@@ -2581,7 +2646,8 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         const firstMinimumValues = [-1, 1].map((direction) => {
           const sine = (selectedOrderPoint.order + direction / config.sourceCount) * config.wavelength / config.spacing
           if (Math.abs(sine) >= 1) return selectedOrderPoint.value
-          return Math.tan(Math.asin(sine)) * config.screenDistance
+          const theta = Math.asin(sine)
+          return angularScale ? theta * 180 / Math.PI : Math.tan(theta) * config.screenDistance
         })
         const start = clamp(toX(Math.min(...firstMinimumValues)), left, right)
         const end = clamp(toX(Math.max(...firstMinimumValues)), left, right)
@@ -2596,11 +2662,21 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
     : null
   const selectedValue = selectedAngle == null
     ? null
-    : Math.tan(selectedAngle) * config.screenDistance
+    : angularScale ? selectedAngle * 180 / Math.PI : Math.tan(selectedAngle) * config.screenDistance
 
   const choosePoint = (event) => {
     const rect = profileRef.current.getBoundingClientRect()
     const svgX = ((event.clientX - rect.left) / rect.width) * width
+    if (snapToPrincipalOrders) {
+      const nearestOrder = orders
+        .map(({ order, value }) => ({ order, distance: Math.abs(svgX - toX(value)) }))
+        .sort((first, second) => first.distance - second.distance)[0]
+      if (!nearestOrder || nearestOrder.distance > 30) return
+      const sine = nearestOrder.order * config.wavelength / config.spacing
+      if (Math.abs(sine) > 1) return
+      onSelect(Math.asin(sine))
+      return
+    }
     const value = clamp(((svgX - left) / (right - left)) * halfRange * 2 - halfRange, -halfRange, halfRange)
     onSelect(thetaForX(value))
   }
@@ -2608,7 +2684,10 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
   return (
     <figure className={"multi-profile" + (expanded ? " expanded" : "")}>
       <figcaption>
-        <span><strong>Screen intensity</strong><small>same ±{formatValue(halfRange)} {doubleSlit ? 'unit' : 'cm'} screen scale</small></span>
+        <span>
+          <strong>{angularScale ? "Far-field intensity" : "Screen intensity"}</strong>
+          <small>{angularScale ? "angular distribution · −90° to +90°" : `same ±${formatValue(halfRange)} ${doubleSlit ? 'unit' : 'cm'} screen scale`}</small>
+        </span>
         <span>Intensity ∝ amplitude²</span>
       </figcaption>
       <svg
@@ -2616,7 +2695,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         viewBox={"0 0 " + width + " " + height}
         onClick={choosePoint}
         role="img"
-        aria-label="Normalized interference intensity profile; click to inspect an observation point"
+        aria-label={(angularScale ? "Far-field angular" : "Screen") + " interference intensity profile; click to inspect an observation angle"}
         style={{ '--wave-colour': '#66ddf3' }}
       >
         <defs>
@@ -2634,8 +2713,17 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
             </clipPath>
           )}
         </defs>
+        <rect x={left} y={top} width={right - left} height={bottom - top} fill="transparent" />
         <line className="profile-axis" x1={left} y1={bottom} x2={right} y2={bottom} />
         <line className="profile-centre" x1={toX(0)} y1={top} x2={toX(0)} y2={bottom} />
+        {angularScale && [-90, -45, 0, 45, 90].map((angle) => (
+          <g className="profile-angle-marker" key={angle}>
+            <line x1={toX(angle)} y1={bottom} x2={toX(angle)} y2={bottom + 5} />
+            <text className="profile-end-label" x={toX(angle)} y={height - 7} textAnchor={angle === -90 ? "start" : angle === 90 ? "end" : "middle"}>
+              {angle > 0 ? "+" : angle < 0 ? "−" : ""}{Math.abs(angle)}°
+            </text>
+          </g>
+        ))}
         {selectedOrderHighlight && (
           <g className="selected-order-highlight" aria-label={"Selected principal order n = " + selectedOrderPoint.order}>
             <rect
@@ -2681,10 +2769,20 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
             <circle cx={toX(selectedValue)} cy={toY(interferenceIntensity(config, selectedAngle))} r="5" />
           </g>
         )}
-        <text className="profile-end-label" x={left} y={height - 7} textAnchor="start">−{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
-        <text className="profile-end-label" x={right} y={height - 7} textAnchor="end">+{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+        {!angularScale && (
+          <>
+            <text className="profile-end-label" x={left} y={height - 7} textAnchor="start">−{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+            <text className="profile-end-label" x={right} y={height - 7} textAnchor="end">+{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+          </>
+        )}
       </svg>
-      <p>Click the profile to inspect the contributing waves at that point.</p>
+      <p>
+        {snapToPrincipalOrders
+          ? "Click near a principal maximum to select that order."
+          : angularScale
+            ? "Click the profile to inspect the contributing waves at that angle."
+            : "Click the profile to inspect the contributing waves at that point."}
+      </p>
     </figure>
   )
 }
@@ -2708,7 +2806,7 @@ function PhasorDiagram({ config, selectedAngle }) {
   const viewHeight = Math.max(68, maxY - minY + 28)
 
   return (
-    <svg className="phasor-diagram" viewBox={(minX - 12) + " " + (minY - 12) + " " + viewWidth + " " + viewHeight} role="img" aria-label="Tip-to-tail phasor addition for the selected observation point">
+    <svg className="phasor-diagram" viewBox={(minX - 12) + " " + (minY - 12) + " " + viewWidth + " " + viewHeight} role="img" aria-label={"Tip-to-tail phasor addition for the selected observation " + (config.kind === 'double-slit' ? "point" : "angle")}>
       <circle className="phasor-origin" cx="90" cy="90" r="3" />
       {points.slice(1).map((point, index) => (
         <line className="phasor-component" key={index} x1={points[index].x} y1={points[index].y} x2={point.x} y2={point.y} />
@@ -2723,6 +2821,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
   const [phaseCycles, setPhaseCycles] = useState(0)
   const [isPlaying, setIsPlaying] = useState(!paused)
   const [showPhasors, setShowPhasors] = useState(false)
+  const angleInspector = config.kind !== 'double-slit'
   const phaseStepCycles = pathDifferenceAtAngle(config, selectedAngle) / config.wavelength
 
   useEffect(() => {
@@ -2814,7 +2913,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
     <section className="inspector-panel multi-source-inspector" aria-labelledby="multi-inspector-title">
       <div className="inspector-graph">
         <div className="interference-plot-scroll">
-          <svg className="interference-plot" viewBox={"0 0 " + plot.width + " " + plot.height} role="img" aria-label="Time graph of every source contribution and their superposition">
+          <svg className="interference-plot" viewBox={"0 0 " + plot.width + " " + plot.height} role="img" aria-label={angleInspector ? "Time graph of every source contribution and their superposition at a far-field detector in the selected direction" : "Time graph of every source contribution and their superposition at the selected point"}>
             <line className="plot-boundary" x1={plot.left} y1={plot.top} x2={plot.left} y2={plot.bottom} />
             <line className="plot-boundary" x1={plot.right} y1={plot.top} x2={plot.right} y2={plot.bottom} />
             <line className="plot-zero" x1={plot.left} y1={plot.middleY} x2={plot.right} y2={plot.middleY} />
@@ -2823,7 +2922,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
             <path className="combined-wave" d={plot.resultantPath} />
             <circle className="combined-point" cx={plot.centreX} cy={plot.toY(plot.resultantAtNow)} r="5" />
             <text className="selected-label" x={plot.centreX} y="191" textAnchor="middle">now · t = 0</text>
-            <text className="axis-title" x={(plot.left + plot.right) / 2} y="213" textAnchor="middle">time at the selected point</text>
+            <text className="axis-title" x={(plot.left + plot.right) / 2} y="213" textAnchor="middle">{angleInspector ? "time at a far-field detector in the selected direction" : "time at the selected point"}</text>
             <text className="amplitude-label" x="16" y={plot.middleY} textAnchor="middle" transform={"rotate(-90 16 " + plot.middleY + ")"}>amplitude</text>
           </svg>
         </div>
@@ -2831,7 +2930,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
 
       <aside className="inspector-details">
         <header className="inspector-header">
-          <p className="eyebrow">Point inspector · fixed observation point</p>
+          <p className="eyebrow">{angleInspector ? "Angle inspector · selected far-field direction" : "Point inspector · fixed observation point"}</p>
           <h2 id="multi-inspector-title">{config.sourceCount} coherent waves at {formatAngle(selectedAngle)}</h2>
         </header>
         <div className="inspector-status">
@@ -2847,7 +2946,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
             <span>{isPlaying ? "Pause graph" : "Play graph"}</span>
             <strong>{formatValue(playbackSpeed)}×</strong>
           </button>
-          <button className="inspector-clear" type="button" onClick={onClose}>Clear point</button>
+          <button className="inspector-clear" type="button" onClick={onClose}>{angleInspector ? "Clear angle" : "Clear point"}</button>
         </div>
         <div className="interference-legend" aria-label="Plot key">
           <span><i className="component-key" />Individual source contributions</span>
@@ -2889,6 +2988,7 @@ function InterferenceInvestigation({ kind, onHome }) {
       ? { ...config, sourceCount: 100 }
       : config
   ), [config, doubleSlit, fieldView])
+  const usesAngularFarField = !doubleSlit && fieldView !== 'apparatus-3d'
   const fringeSpacing = config.wavelength * screenDistance / config.spacing
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const positiveOrders = Array.from({ length: maximumOrder }, (_, index) => index + 1)
@@ -2983,7 +3083,7 @@ function InterferenceInvestigation({ kind, onHome }) {
                 onChange={updateGeometry(setSourceCount)}
                 disabled={fieldView === 'apparatus-3d'}
               />
-              <RangeControl id="grating-screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="22" step="0.5" unit=" cm" onChange={updateGeometry(setScreenDistance)} />
+              <RangeControl id="grating-screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="22" step="0.5" unit=" cm" onChange={updateGeometry(setScreenDistance)} disabled={usesAngularFarField} />
             </>
           )}
           <RangeControl id={kind + "-speed"} label="Animation speed" value={playbackSpeed} min="0.25" max="2" step="0.25" unit="×" onChange={setPlaybackSpeed} disabled={fieldView === 'intensity'} />
@@ -3039,7 +3139,14 @@ function InterferenceInvestigation({ kind, onHome }) {
             />
           )}
           <aside className="pattern-panel">
-            <InterferenceProfile config={displayedConfig} selectedAngle={selectedAngle} onSelect={selectAngle} selectedOrder={doubleSlit ? null : selectedOrder} />
+            <InterferenceProfile
+              config={displayedConfig}
+              selectedAngle={selectedAngle}
+              onSelect={selectAngle}
+              selectedOrder={doubleSlit ? null : selectedOrder}
+              angularScale={usesAngularFarField}
+              snapToPrincipalOrders={!doubleSlit && fieldView === 'principal-orders'}
+            />
             <div className="equation-panel">
               <p className="eyebrow">{doubleSlit ? "Fringe model" : "Grating equation"}</p>
               {doubleSlit ? (
@@ -3075,11 +3182,11 @@ function InterferenceInvestigation({ kind, onHome }) {
           </aside>
         </div>
 
-        {!doubleSlit && fieldView === 'apparatus-3d' ? null : selectedAngle == null ? (
+        {!doubleSlit && (fieldView === 'apparatus-3d' || fieldView === 'principal-orders') ? null : selectedAngle == null ? (
           <div className="selection-prompt">
-            {!doubleSlit && fieldView === 'principal-orders'
-              ? "Choose a principal order in the diagram or click the intensity profile to inspect its contributing waves."
-              : "Select a point in the wave field or intensity profile to inspect the contributing waves."}
+            {doubleSlit
+              ? "Select a point in the wave field or intensity profile to inspect the contributing waves."
+              : "Select an angle in the wave field or far-field intensity profile to inspect the contributing waves."}
           </div>
         ) : (
           <MultiSourceInspector
@@ -3225,7 +3332,6 @@ function LandingPage({ onOpen }) {
               <span className="module-copy">
                 <strong>{module.title}</strong>
                 <small>{module.description}</small>
-                <em>{module.status}</em>
               </span>
             </button>
           ))}

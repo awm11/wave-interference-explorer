@@ -19,6 +19,14 @@
 
 * { box-sizing: border-box; }
 
+svg, svg *, canvas, .module-art, .multi-field-wrap, .grating-3d-wrap {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+svg [tabindex]:focus { outline: none; }
+
 html { scroll-behavior: smooth; }
 
 body {
@@ -338,6 +346,8 @@ main {
 .field-selection { --selection-colour: var(--amber); }
 .field-selection.crest-trough { --selection-colour: #ff806f; }
 .field-selection line, .field-selection path { fill: none; stroke: var(--selection-colour); stroke-width: 1.3; stroke-dasharray: 5 5; }
+.field-selection .selected-ray-primary { stroke-width: 1.65; opacity: 1; }
+.field-selection .selected-ray-secondary { stroke-width: 1; stroke-dasharray: 4 6; opacity: 0.4; }
 .field-selection.crest-trough path { stroke-dasharray: 2 4; }
 .field-selection circle { fill: #071722; stroke: var(--selection-colour); stroke-width: 3; }
 .field-selection text { fill: var(--selection-colour); font: 700 13px 'DM Sans', sans-serif; }
@@ -388,6 +398,7 @@ main {
 .selected-order-badge text { fill: #ffe4a4; font: 750 8px 'DM Sans', sans-serif; letter-spacing: 0.06em; }
 .order-marker line { stroke: rgba(255, 212, 122, 0.5); stroke-width: 1; }
 .order-marker text, .profile-end-label { fill: var(--faint); font: 9px 'DM Sans', sans-serif; }
+.profile-angle-marker line { stroke: rgba(151, 199, 215, 0.34); stroke-width: 1; }
 .order-marker.active line { stroke: var(--amber); stroke-width: 2; }
 .order-marker.active text { fill: var(--amber); font-weight: 700; }
 .profile-selection line { stroke: var(--amber); stroke-width: 1.4; stroke-dasharray: 4 4; }
