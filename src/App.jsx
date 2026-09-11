@@ -65,9 +65,9 @@ function describeRatio(ratio) {
     id: 'custom',
     ratio,
     short: `a/λ = ${formatValue(ratio)}`,
-    verdict: isNarrowerThanWavelength ? 'Very strong diffraction' : template.verdict,
+    verdict: isNarrowerThanWavelength ? 'Wide spread · weak transmission' : template.verdict,
     description: isNarrowerThanWavelength
-      ? 'The aperture is narrower than one wavelength. The transmitted wave spreads across almost the full forward half-space, so no first minimum appears before ±90°.'
+      ? 'The aperture is narrower than one wavelength. The transmitted wave is weak and spreads across almost the full forward half-space.'
       : template.description,
   }
 }
@@ -112,6 +112,8 @@ function WaveCanvas({
     let travelledDistance = 0
     let width = 0
     let height = 0
+    let combinedFieldCache = null
+    let combinedFieldKey = ''
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
@@ -121,8 +123,11 @@ function WaveCanvas({
       canvas.width = Math.floor(width * dpr)
       canvas.height = Math.floor(height * dpr)
       context.setTransform(dpr, 0, 0, dpr, 0, 0)
-      fieldCanvas.width = clamp(Math.floor(width * 0.16), 100, 170)
-      fieldCanvas.height = clamp(Math.floor(height * 0.16), 70, 120)
+      // Render at roughly one field sample per displayed CSS pixel. The caps
+      // protect unusually large windows without reintroducing visible scaling.
+      fieldCanvas.width = clamp(Math.ceil(width * 0.66), 210, 900)
+      fieldCanvas.height = clamp(Math.ceil(height), 360, 640)
+      combinedFieldKey = ''
     }
 
     const drawBackground = () => {
@@ -174,14 +179,11 @@ function WaveCanvas({
       const gapBottom = centreY + gapHeight / 2
       const sourceTotal = settings.sourceCount
       const sources = Array.from({ length: sourceTotal }, (_, index) => {
-        const isEndPoint = index === 0 || index === sourceTotal - 1
         return {
           x: barrierX + 2,
           y: gapTop + (index / (sourceTotal - 1)) * gapHeight,
-          weight: isEndPoint ? 0.5 : 1,
         }
       })
-      const totalWeight = sourceTotal - 1
       modelRef.current = {
         width,
         height,
@@ -216,57 +218,79 @@ function WaveCanvas({
       }
       context.restore()
 
-      // Instantaneous resultant disturbance from coherent point samples.
+      // A continuous-aperture teaching model. The sinc envelope gives the
+      // single-slit spread, while a smooth transmission factor makes openings
+      // much narrower than one wavelength broad but faint. Drawn source points
+      // do not enter this calculation.
       if (settings.showResultant) {
         const fw = fieldCanvas.width
         const fh = fieldCanvas.height
+        const cacheKey = [fw, fh, width, height, settings.apertureWidth, settings.wavelengthScale].join(':')
+        if (cacheKey !== combinedFieldKey) {
+          const fieldReal = new Float32Array(fw * fh)
+          const fieldImaginary = new Float32Array(fw * fh)
+          const apertureWidthUnits = settings.apertureWidth
+          const wavelengthUnits = settings.wavelengthScale
+          const apertureToWavelength = apertureWidthUnits / wavelengthUnits
+          const waveNumberUnits = 2 * Math.PI / wavelengthUnits
+          const transmissionAmplitude = apertureToWavelength / Math.sqrt(1 + apertureToWavelength * apertureToWavelength)
+          const curvature = 1 / (1 + Math.pow(apertureToWavelength / 2, 2))
+
+          for (let py = 0; py < fh; py += 1) {
+            const transversePosition = ((py / (fh - 1)) * height - centreY) / unitLength
+            for (let px = 0; px < fw; px += 1) {
+              const longitudinalPosition = (px / (fw - 1)) * (width - barrierX) / unitLength
+              const fieldIndex = py * fw + px
+
+              if (longitudinalPosition < 1e-5) {
+                fieldReal[fieldIndex] = Math.abs(transversePosition) <= apertureWidthUnits / 2 ? transmissionAmplitude : 0
+                fieldImaginary[fieldIndex] = 0
+                continue
+              }
+
+              const radialDistance = Math.hypot(longitudinalPosition, transversePosition)
+              const sineTheta = transversePosition / radialDistance
+              const angularEnvelope = Math.abs(sinc(Math.PI * apertureToWavelength * sineTheta))
+              const amplitude = transmissionAmplitude * angularEnvelope
+
+              // Elliptical phase fronts give the intended qualitative transition:
+              // almost circular for a small gap and almost plane for a wide one.
+              const propagationDistance = Math.hypot(longitudinalPosition, transversePosition * curvature)
+              const propagationPhase = waveNumberUnits * propagationDistance
+              const phaseCosine = Math.cos(propagationPhase)
+              const phaseSine = Math.sin(propagationPhase)
+
+              fieldReal[fieldIndex] = amplitude * phaseCosine
+              fieldImaginary[fieldIndex] = amplitude * phaseSine
+            }
+          }
+
+          combinedFieldCache = { real: fieldReal, imaginary: fieldImaginary }
+          combinedFieldKey = cacheKey
+        }
+
         const image = fieldContext.createImageData(fw, fh)
         const pixels = image.data
-        const k = (2 * Math.PI) / wavelength
+        const timeAngle = 2 * Math.PI * phase / wavelength
+        const timeCosine = Math.cos(timeAngle)
+        const timeSine = Math.sin(timeAngle)
+        const background = [8, 22, 34]
 
-        for (let py = 0; py < fh; py += 1) {
-          const y = (py / (fh - 1)) * height
-          for (let px = 0; px < fw; px += 1) {
-            const x = barrierX + (px / (fw - 1)) * (width - barrierX)
-            let real = 0
-            let imaginary = 0
-
-            for (const source of sources) {
-              const dx = x - source.x
-              const dy = y - source.y
-              const distance = Math.max(4, Math.hypot(dx, dy))
-              const obliquity = Math.sqrt(Math.max(0, dx / distance))
-              const falloff = 1 / Math.sqrt(distance / wavelength + 0.7)
-              const angle = k * (distance - travelledDistance)
-              real += Math.cos(angle) * obliquity * falloff * source.weight
-              imaginary += Math.sin(angle) * obliquity * falloff * source.weight
-            }
-
-            // Trapezoidal integration across the aperture keeps the result
-            // independent of how many source samples we choose to draw.
-            const normalisedReal = real / totalWeight
-            const normalisedImaginary = imaginary / totalWeight
-            const signed = Math.tanh(normalisedReal * 2.2)
-            const intensity = clamp(
-              (normalisedReal * normalisedReal + normalisedImaginary * normalisedImaginary) * 2.6,
-              0,
-              1,
-            )
-            const crest = Math.max(0, signed)
-            const trough = Math.max(0, -signed)
-            const index = (py * fw + px) * 4
-            pixels[index] = Math.round(8 + 27 * intensity + 244 * trough)
-            pixels[index + 1] = Math.round(22 + 67 * intensity + 157 * crest + 70 * trough)
-            pixels[index + 2] = Math.round(34 + 95 * intensity + 238 * crest + 38 * trough)
-            pixels[index + 3] = Math.round(42 + 184 * intensity)
-          }
+        for (let fieldIndex = 0; fieldIndex < fw * fh; fieldIndex += 1) {
+          const displacement = combinedFieldCache.real[fieldIndex] * timeCosine
+            + combinedFieldCache.imaginary[fieldIndex] * timeSine
+          const colourStrength = clamp(Math.abs(displacement), 0, 1)
+          const targetColour = displacement >= 0 ? [114, 236, 255] : [255, 112, 93]
+          const pixelIndex = fieldIndex * 4
+          pixels[pixelIndex] = Math.round(background[0] + (targetColour[0] - background[0]) * colourStrength)
+          pixels[pixelIndex + 1] = Math.round(background[1] + (targetColour[1] - background[1]) * colourStrength)
+          pixels[pixelIndex + 2] = Math.round(background[2] + (targetColour[2] - background[2]) * colourStrength)
+          pixels[pixelIndex + 3] = 255
         }
 
         fieldContext.putImageData(image, 0, 0)
         context.save()
-        context.globalCompositeOperation = 'screen'
-        context.globalAlpha = 0.76
-        context.imageSmoothingEnabled = true
+        context.imageSmoothingEnabled = false
         context.drawImage(fieldCanvas, barrierX, 0, width - barrierX, height)
         context.restore()
       }
@@ -402,63 +426,6 @@ function WaveCanvas({
   )
 }
 
-function FarFieldProfile({ ratio, compact = false }) {
-  const width = 300
-  const plotTop = 12
-  const plotBottom = 114
-  const plotLeft = 12
-  const plotRight = 288
-  const toX = (angle) => plotLeft + ((angle + 90) / 180) * (plotRight - plotLeft)
-  const intensityAt = (angle) => {
-    const beta = Math.PI * ratio * Math.sin((angle * Math.PI) / 180)
-    if (Math.abs(beta) < 0.00001) return 1
-    return (Math.sin(beta) / beta) ** 2
-  }
-  const samples = Array.from({ length: 181 }, (_, index) => {
-    const angle = index - 90
-    return { x: toX(angle), y: plotBottom - intensityAt(angle) * (plotBottom - plotTop) }
-  })
-  const linePath = samples.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
-  const areaPath = `${linePath} L${plotRight},${plotBottom} L${plotLeft},${plotBottom} Z`
-  const firstMinimum = ratio >= 1 ? Math.asin(1 / ratio) * (180 / Math.PI) : null
-  const minimumLabel = firstMinimum === null
-    ? 'outside ±90°'
-    : firstMinimum >= 89.5
-      ? '±90°'
-      : `±${firstMinimum.toFixed(1)}°`
-
-  return (
-    <figure className={`intensity-figure${compact ? ' compact' : ''}`}>
-      <figcaption>
-        <span><strong>Far-field intensity</strong><small>single aperture</small></span>
-        <span className="minimum-value">{firstMinimum === null ? 'No first minimum visible' : `First minima ${minimumLabel}`}</span>
-      </figcaption>
-      <svg
-        viewBox={`0 0 ${width} 138`}
-        role="img"
-        aria-label={`Far-field single-aperture intensity profile for an aperture ${formatValue(ratio)} wavelengths wide. ${firstMinimum === null ? 'The first minima are beyond the visible angular range.' : `The first minima are at approximately ${minimumLabel}.`}`}
-      >
-        <defs>
-          <linearGradient id={`profile-fill-${ratio}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#66ddf3" stopOpacity="0.48" />
-            <stop offset="1" stopColor="#66ddf3" stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
-        <line className="profile-axis" x1={plotLeft} y1={plotBottom} x2={plotRight} y2={plotBottom} />
-        <line className="profile-centre" x1={toX(0)} y1={plotTop} x2={toX(0)} y2={plotBottom} />
-        {firstMinimum !== null && <line className="profile-minimum" x1={toX(-firstMinimum)} y1={plotTop} x2={toX(-firstMinimum)} y2={plotBottom} />}
-        {firstMinimum !== null && <line className="profile-minimum" x1={toX(firstMinimum)} y1={plotTop} x2={toX(firstMinimum)} y2={plotBottom} />}
-        <path className="profile-area" d={areaPath} fill={`url(#profile-fill-${ratio})`} />
-        <path className="profile-line" d={linePath} />
-        <text x={plotLeft} y="132" textAnchor="start">−90°</text>
-        <text x={toX(0)} y="132" textAnchor="middle">0°</text>
-        <text x={plotRight} y="132" textAnchor="end">+90°</text>
-      </svg>
-      <p>A wider central maximum means greater diffraction. Intensity ∝ amplitude².</p>
-    </figure>
-  )
-}
-
 function ComparisonCard({ item, paused, playbackSpeed, onExplore }) {
   const sourceCount = Math.min(49, Math.max(13, Math.round(item.ratio * 7)))
 
@@ -486,7 +453,6 @@ function ComparisonCard({ item, paused, playbackSpeed, onExplore }) {
           playbackSpeed={playbackSpeed}
         />
       </button>
-      <FarFieldProfile ratio={item.ratio} compact />
     </article>
   )
 }
@@ -742,7 +708,7 @@ function HuygensExplorer({ onHome }) {
             <div className="comparison-toolbar">
               <div>
                 <strong>Shared conditions</strong>
-                <span>λ = 1 relative unit · normalized intensity</span>
+                <span>λ = 1 relative unit · shared time scale</span>
               </div>
               <div className="comparison-actions">
                 <label htmlFor="compare-speed">
@@ -838,7 +804,7 @@ function HuygensExplorer({ onHome }) {
                 <div className="canvas-key" aria-label="Simulation key">
                   <span><i className="key-line incident" />Incident wavefronts</span>
                   <span><i className="key-dot" />Sampled sources</span>
-                  <span><i className="key-line resultant" />Combined wave</span>
+                  <span><i className="key-line resultant" />Combined displacement · colour relative to A₀</span>
                 </div>
                 <div className="inspect-hint">Click anywhere to the right of the aperture to inspect the waves at that point.</div>
               </div>
@@ -849,8 +815,6 @@ function HuygensExplorer({ onHome }) {
                   <span className="result-status">{aperture.verdict}</span>
                 </div>
                 <p className="result-copy">{aperture.description}</p>
-
-                <FarFieldProfile ratio={aperture.ratio} />
 
                 <div className="display-controls">
                   <span className="control-label">Show in the model</span>
@@ -906,7 +870,7 @@ function HuygensExplorer({ onHome }) {
                       setInspectionPoint(null)
                     }}
                   />
-                  <p>More dots refine the numerical construction; they do not make the transmitted wave brighter.</p>
+                  <p>More dots make the Huygens construction denser; the calculated combined field is unchanged.</p>
                 </div>
               </aside>
             </div>
@@ -925,7 +889,7 @@ function HuygensExplorer({ onHome }) {
 
       <section className="principle-section">
         <div className="section-heading">
-          <p className="eyebrow">The A-level idea</p>
+          <p className="eyebrow">The key idea:</p>
           <h2>What Huygens’ construction is saying</h2>
         </div>
         <ol className="principle-steps">
@@ -949,19 +913,8 @@ function HuygensExplorer({ onHome }) {
         <div>
           <p className="eyebrow">Exam-ready statement</p>
           <h2>Diffraction is most significant when the wavelength is comparable to the aperture width.</h2>
-          <p>For a fixed wavelength, a narrower aperture produces greater angular spreading. “Small” only has meaning relative to λ.</p>
+          <p>For a fixed wavelength, a narrower aperture produces greater angular spreading. If the aperture is much narrower than λ, the transmitted wave is very weak.</p>
         </div>
-      </section>
-
-      <section className="refinement">
-        <div>
-          <p className="eyebrow">One useful refinement</p>
-          <h2>Do the wavelets “come together” to make the wave?</h2>
-        </div>
-        <p>
-          Close, but say <strong>their amplitudes superpose</strong>. Huygens’ geometric construction locates the next wavefront;
-          the Huygens–Fresnel refinement explains the diffraction pattern using phase, reinforcement and cancellation.
-        </p>
       </section>
 
       <footer>
@@ -1019,14 +972,36 @@ function wavelengthColour(wavelengthNm) {
   return "hsl(" + Math.round(clamp(hue, 0, 270)) + " 90% 68%)"
 }
 
+function laserColourForWavelength(wavelengthNm) {
+  if (wavelengthNm > 700) return [255, 62, 145]
+
+  const colourStops = [
+    [380, [118, 72, 255]],
+    [400, [139, 105, 255]],
+    [450, [83, 128, 255]],
+    [485, [54, 220, 255]],
+    [520, [72, 255, 151]],
+    [565, [218, 255, 82]],
+    [590, [255, 211, 67]],
+    [625, [255, 105, 65]],
+    [700, [255, 50, 45]],
+  ]
+  const clampedWavelength = clamp(wavelengthNm, colourStops[0][0], colourStops.at(-1)[0])
+  const upperIndex = colourStops.findIndex(([wavelength]) => wavelength >= clampedWavelength)
+  const upper = colourStops[Math.max(1, upperIndex)]
+  const lower = colourStops[Math.max(0, upperIndex - 1)]
+  const mix = (clampedWavelength - lower[0]) / (upper[0] - lower[0])
+  return lower[1].map((channel, index) => Math.round(channel + (upper[1][index] - channel) * mix))
+}
+
 function formatAngle(theta) {
   return formatValue(theta * 180 / Math.PI) + "°"
 }
 
-function RangeControl({ id, label, value, min, max, step, unit, onChange, disabled = false }) {
+function RangeControl({ id, label, value, min, max, step, unit, displayValue = null, onChange, disabled = false }) {
   return (
     <label className={"investigation-control" + (disabled ? " disabled" : "")} htmlFor={id}>
-      <span>{label}<strong>{formatValue(value)}{unit}</strong></span>
+      <span>{label}<strong>{displayValue ?? formatValue(value)}{unit}</strong></span>
       <input
         id={id}
         type="range"
@@ -1041,11 +1016,14 @@ function RangeControl({ id, label, value, min, max, step, unit, onChange, disabl
   )
 }
 
+const DEFAULT_APPARATUS_YAW = 0.46
+const DEFAULT_APPARATUS_PITCH = 0.2
+
 function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, playbackSpeed }) {
   const canvasRef = useRef(null)
   const drawRef = useRef(null)
-  const yawRef = useRef(-0.3)
-  const pitchRef = useRef(-0.22)
+  const yawRef = useRef(DEFAULT_APPARATUS_YAW)
+  const pitchRef = useRef(DEFAULT_APPARATUS_PITCH)
   const phaseRef = useRef(0)
   const dragRef = useRef(null)
   const screenHotspotsRef = useRef([])
@@ -1098,15 +1076,13 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       const sineYaw = Math.sin(yaw)
       const cosinePitch = Math.cos(pitch)
       const sinePitch = Math.sin(pitch)
+      const diagramMicroScale = 0.5
       const targetX = (config.screenDistance - 5.5) / 2
-      const apparatusHalfWidth = Math.max(
-        config.screenHalfHeight,
-        (config.sourceCount - 1) * config.spacing / 2 + 1,
-      )
+      const apparatusHalfWidth = Math.max(config.screenHalfHeight, 2.45)
       const scale = Math.min(
         width / (config.screenDistance + 15),
         height / Math.max(15.5, apparatusHalfWidth * 1.45),
-      ) * 0.98
+      ) * 0.98 * 0.9
 
       const project = ([x, y, z]) => {
         const dx = x - targetX
@@ -1116,7 +1092,7 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         const liftedZ = rotatedY * sinePitch + z * cosinePitch
         const perspective = clamp(1 - liftedY * 0.012, 0.78, 1.2)
         return {
-          x: width * 0.5 + rotatedX * scale * perspective,
+          x: width * 0.45 + rotatedX * scale * perspective,
           y: height * 0.51 - liftedZ * scale * perspective,
           depth: liftedY,
         }
@@ -1168,7 +1144,16 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         context.restore()
       }
 
+      const wavelengthNm = config.wavelength * 1000
+      const laserRgb = laserColourForWavelength(wavelengthNm)
+      const laserColour = `rgb(${laserRgb.join(', ')})`
+      const laserColourWithAlpha = (alpha) => `rgba(${laserRgb.join(', ')}, ${alpha})`
+
       const floorZ = -4.5
+      fillFace(
+        [[-5.5, -config.screenHalfHeight, floorZ], [config.screenDistance, -config.screenHalfHeight, floorZ], [config.screenDistance, config.screenHalfHeight, floorZ], [-5.5, config.screenHalfHeight, floorZ]],
+        'rgba(23, 74, 81, 0.36)',
+      )
       for (let x = -5; x <= config.screenDistance; x += 2.5) {
         strokeLine([[x, -config.screenHalfHeight, floorZ], [x, config.screenHalfHeight, floorZ]], 'rgba(126, 181, 199, 0.07)')
       }
@@ -1177,71 +1162,76 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       }
 
       const screenX = config.screenDistance
-      const screenHalfWidth = config.screenHalfHeight
+      const observationHalfWidth = config.screenHalfHeight
+      const screenPlateHalfWidth = observationHalfWidth * 2 * 0.6
       const screenHalfHeight3D = 4.35
-      fillFace(
-        [[screenX, -screenHalfWidth, -screenHalfHeight3D], [screenX, screenHalfWidth, -screenHalfHeight3D], [screenX, screenHalfWidth, screenHalfHeight3D], [screenX, -screenHalfWidth, screenHalfHeight3D]],
-        'rgba(145, 175, 186, 0.12)',
-        'rgba(188, 224, 234, 0.62)',
-        1.3,
-      )
+  fillFace(
+    [[screenX, -screenPlateHalfWidth, -screenHalfHeight3D], [screenX, screenPlateHalfWidth, -screenHalfHeight3D], [screenX, screenPlateHalfWidth, screenHalfHeight3D], [screenX, -screenPlateHalfWidth, screenHalfHeight3D]],
+    'rgba(232, 240, 244, 0.24)',
+    'rgba(248, 252, 255, 0.84)',
+    1.3,
+  )
 
-      const screenSampleCount = 181
+      const screenSampleCount = 1001
       for (let index = 0; index < screenSampleCount; index += 1) {
-        const screenY = -screenHalfWidth + (index / (screenSampleCount - 1)) * screenHalfWidth * 2
+        const screenY = -observationHalfWidth + (index / (screenSampleCount - 1)) * observationHalfWidth * 2
         const theta = Math.atan(screenY / config.screenDistance)
         const intensity = interferenceIntensity(config, theta)
         if (intensity < 0.006) continue
         const point = project([screenX + 0.03, screenY, 0])
         const radius = 1.2 + Math.pow(intensity, 0.45) * 5.2
         const glow = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius * 2.1)
-        glow.addColorStop(0, 'rgba(132, 239, 255,' + (0.2 + intensity * 0.8) + ')')
-        glow.addColorStop(0.35, 'rgba(74, 216, 241,' + (intensity * 0.58) + ')')
-        glow.addColorStop(1, 'rgba(74, 216, 241,0)')
+        glow.addColorStop(0, laserColourWithAlpha(0.2 + intensity * 0.8))
+        glow.addColorStop(0.35, laserColourWithAlpha(intensity * 0.58))
+        glow.addColorStop(1, laserColourWithAlpha(0))
         context.fillStyle = glow
         context.beginPath()
         context.arc(point.x, point.y, radius * 2.1, 0, Math.PI * 2)
         context.fill()
       }
-      label([screenX, -screenHalfWidth, screenHalfHeight3D + 0.7], 'SCREEN · SAME ±' + formatValue(config.screenHalfHeight) + ' UNIT SCALE', '#aac3cc', 'left', 9)
+      label([screenX, 0, screenHalfHeight3D + 0.7], 'SCREEN · CENTRAL ±' + formatValue(config.screenHalfHeight) + ' cm OBSERVATION RANGE', '#aac3cc', 'center', 9)
 
-      const gratingHalfWidth = Math.max(4.9, (config.sourceCount - 1) * config.spacing / 2 + 0.7)
-      const gratingHalfHeight = 3.65
-      fillFace(
-        [[0, -gratingHalfWidth, -gratingHalfHeight], [0, gratingHalfWidth, -gratingHalfHeight], [0, gratingHalfWidth, gratingHalfHeight], [0, -gratingHalfWidth, gratingHalfHeight]],
-        'rgba(129, 151, 160, 0.2)',
-        'rgba(190, 220, 229, 0.72)',
-        1.4,
+      const gratingHalfWidth = 2.45
+      const gratingHalfHeight = 1.85
+  fillFace(
+    [[0, -gratingHalfWidth, -gratingHalfHeight], [0, gratingHalfWidth, -gratingHalfHeight], [0, gratingHalfWidth, gratingHalfHeight], [0, -gratingHalfWidth, gratingHalfHeight]],
+    'rgba(52, 70, 137, 0.52)',
+    'rgba(132, 162, 248, 0.9)',
+    1.4,
+  )
+
+      const rulingCount = 61
+      for (let index = 0; index < rulingCount; index += 1) {
+        const rulingY = -gratingHalfWidth + 0.16 + (index / (rulingCount - 1)) * (gratingHalfWidth * 2 - 0.32)
+        const centreBias = 1 - Math.abs((index / (rulingCount - 1)) * 2 - 1)
+      strokeLine(
+        [[0.035, rulingY, -gratingHalfHeight + 0.16], [0.035, rulingY, gratingHalfHeight - 0.16]],
+        `rgba(196, 213, 255, ${0.22 + centreBias * 0.34})`,
+        0.58,
       )
-
-      const sourcePositions = Array.from({ length: config.sourceCount }, (_, index) => (
-        (index - (config.sourceCount - 1) / 2) * config.spacing
-      ))
-      sourcePositions.forEach((sourceY) => {
-        strokeLine([[0.02, sourceY, -gratingHalfHeight + 0.28], [0.02, sourceY, gratingHalfHeight - 0.28]], '#06131d', 5.8)
-        strokeLine([[0.04, sourceY, -gratingHalfHeight + 0.28], [0.04, sourceY, gratingHalfHeight - 0.28]], 'rgba(255, 208, 112, 0.82)', 1.4)
-      })
-      label([0, -gratingHalfWidth, gratingHalfHeight + 0.7], config.sourceCount + ' EQUALLY SPACED SLITS', '#ffd477', 'left', 9)
-
+      }
       const laserPoint = [-5.4, 0, 0]
       const laserProjected = project(laserPoint)
       const laserGlow = context.createRadialGradient(laserProjected.x, laserProjected.y, 0, laserProjected.x, laserProjected.y, 15)
-      laserGlow.addColorStop(0, 'rgba(255, 215, 119, 0.95)')
-      laserGlow.addColorStop(0.24, 'rgba(255, 188, 80, 0.48)')
-      laserGlow.addColorStop(1, 'rgba(255, 188, 80, 0)')
+      laserGlow.addColorStop(0, laserColourWithAlpha(0.95))
+      laserGlow.addColorStop(0.24, laserColourWithAlpha(0.48))
+      laserGlow.addColorStop(1, laserColourWithAlpha(0))
       context.fillStyle = laserGlow
       context.beginPath()
       context.arc(laserProjected.x, laserProjected.y, 15, 0, Math.PI * 2)
       context.fill()
-      strokeLine([[-5.25, 0, 0], [0, 0, 0]], '#ffd477', 2.5)
-      strokeLine([[-5.25, -0.3, -0.3], [0, -0.3, -0.3]], 'rgba(255, 212, 119, 0.3)', 1)
-      strokeLine([[-5.25, 0.3, 0.3], [0, 0.3, 0.3]], 'rgba(255, 212, 119, 0.3)', 1)
-      label([-5.45, 0, 0.72], 'MONOCHROMATIC LIGHT', '#ffd477', 'center', 9)
+      strokeLine([[-5.25, 0, 0], [0, 0, 0]], laserColour, 2.5)
+      strokeLine([[-5.25, -0.3, -0.3], [0, -0.3, -0.3]], laserColourWithAlpha(0.3), 1)
+      strokeLine([[-5.25, 0.3, 0.3], [0, 0.3, 0.3]], laserColourWithAlpha(0.3), 1)
+      label([-5.45, 0, 0.72], 'LASER · λ = ' + Math.round(wavelengthNm) + ' nm' + (wavelengthNm > 700 ? ' · IR FALSE COLOUR' : ''), laserColour, 'center', 9)
 
-      const incidentSpacing = Math.max(0.55, config.wavelength)
-      const incidentOffset = phaseRef.current * incidentSpacing
-      for (let x = -4.8 + incidentOffset; x < -0.15; x += incidentSpacing) {
-        strokeLine([[x, -2.8, -2.5], [x, -2.8, 2.5], [x, 2.8, 2.5], [x, 2.8, -2.5], [x, -2.8, -2.5]], 'rgba(103, 224, 245, 0.25)', 0.9)
+  const displayedWavelength = Math.max(0.55, config.wavelength)
+  const incidentSpacing = displayedWavelength
+  const incidentOffset = phaseRef.current * incidentSpacing
+  const incidentHalfWidth = 2.35 * 0.5
+  const incidentHalfHeight = 1.55 * 0.5
+  for (let x = -4.8 + incidentOffset; x < -0.15; x += incidentSpacing) {
+    strokeLine([[x, -incidentHalfWidth, -incidentHalfHeight], [x, -incidentHalfWidth, incidentHalfHeight], [x, incidentHalfWidth, incidentHalfHeight], [x, incidentHalfWidth, -incidentHalfHeight], [x, -incidentHalfWidth, -incidentHalfHeight]], laserColourWithAlpha(0.28), 0.9)
       }
 
       strokeLine([[0.12, 0, 0], [Math.min(7.5, config.screenDistance), 0, 0]], 'rgba(191, 224, 233, 0.28)', 1, [3, 4])
@@ -1250,19 +1240,22 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       orders.forEach((order) => {
         const theta = Math.asin(order * config.wavelength / config.spacing)
         const tangent = Math.tan(theta)
-        const reachesScreen = Math.abs(tangent * config.screenDistance) <= screenHalfWidth
+        const reachesScreen = Math.abs(tangent * config.screenDistance) <= observationHalfWidth
         const endX = reachesScreen || Math.abs(tangent) < 1e-7
           ? config.screenDistance
-          : Math.min(config.screenDistance, screenHalfWidth / Math.abs(tangent))
+          : Math.min(config.screenDistance, observationHalfWidth / Math.abs(tangent))
         const endY = endX * tangent
         const isActive = order === activeOrder
-        const rayColour = isActive ? '#ffd477' : 'rgba(99, 221, 244, 0.43)'
+        const rayColour = isActive ? laserColour : laserColourWithAlpha(0.43)
+        if (isActive) {
+          strokeLine([[0.18, 0, 0], [endX, endY, 0]], laserColourWithAlpha(0.18), 5.5)
+        }
         strokeLine([[0.18, 0, 0], [endX, endY, 0]], rayColour, isActive ? 2.7 : 1.15, isActive ? [] : [4, 4])
         if (reachesScreen) {
           const orderPoint = project([config.screenDistance + 0.08, endY, 0])
           nextScreenHotspots.push({ order, x: orderPoint.x, y: orderPoint.y })
           context.save()
-          context.fillStyle = isActive ? '#ffd477' : 'rgba(114, 233, 252, 0.8)'
+          context.fillStyle = isActive ? laserColour : laserColourWithAlpha(0.8)
           context.beginPath()
           context.arc(orderPoint.x, orderPoint.y, isActive ? 5 : 3, 0, Math.PI * 2)
           context.fill()
@@ -1282,7 +1275,7 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       const across = [-Math.sin(activeTheta), Math.cos(activeTheta), 0]
       const selectedEndX = orderOnScreen || Math.abs(Math.tan(activeTheta)) < 1e-7
         ? config.screenDistance
-        : Math.min(config.screenDistance, screenHalfWidth / Math.abs(Math.tan(activeTheta)))
+        : Math.min(config.screenDistance, observationHalfWidth / Math.abs(Math.tan(activeTheta)))
       const selectedLength = selectedEndX / Math.max(0.01, direction[0])
 
       if (activeOrder !== 0) {
@@ -1301,16 +1294,16 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         )
 
         const sign = Math.sign(activeTheta)
-        const lowerSource = [0.06, -sign * config.spacing / 2, -0.35]
-        const upperSource = [0.06, sign * config.spacing / 2, -0.35]
-        const pathDifference = config.spacing * Math.abs(Math.sin(activeTheta))
+        const lowerSource = [0.06, -sign * config.spacing * diagramMicroScale / 2, -0.35]
+        const upperSource = [0.06, sign * config.spacing * diagramMicroScale / 2, -0.35]
+        const pathDifference = config.spacing * diagramMicroScale * Math.abs(Math.sin(activeTheta))
         const phaseFoot = [
           lowerSource[0] + direction[0] * pathDifference,
           lowerSource[1] + direction[1] * pathDifference,
           lowerSource[2],
         ]
-        strokeLine([lowerSource, [lowerSource[0] + direction[0] * Math.min(selectedLength, 5.2), lowerSource[1] + direction[1] * Math.min(selectedLength, 5.2), lowerSource[2]]], 'rgba(255, 212, 119, 0.78)', 1.25)
-        strokeLine([upperSource, [upperSource[0] + direction[0] * Math.min(selectedLength, 5.2), upperSource[1] + direction[1] * Math.min(selectedLength, 5.2), upperSource[2]]], 'rgba(255, 212, 119, 0.78)', 1.25)
+        strokeLine([lowerSource, [lowerSource[0] + direction[0] * Math.min(selectedLength, 5.2), lowerSource[1] + direction[1] * Math.min(selectedLength, 5.2), lowerSource[2]]], laserColourWithAlpha(0.78), 1.25)
+        strokeLine([upperSource, [upperSource[0] + direction[0] * Math.min(selectedLength, 5.2), upperSource[1] + direction[1] * Math.min(selectedLength, 5.2), upperSource[2]]], laserColourWithAlpha(0.78), 1.25)
         strokeLine([lowerSource, upperSource], 'rgba(185, 222, 232, 0.42)', 1)
         strokeLine([lowerSource, phaseFoot], '#ffad70', 2.2)
         strokeLine([phaseFoot, upperSource], 'rgba(102, 221, 243, 0.8)', 1.25, [3, 3])
@@ -1323,12 +1316,12 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         )
       }
 
-      const wavefrontSpacing = Math.max(0.75, config.wavelength * 1.15)
+      const wavefrontSpacing = displayedWavelength
       const movingOffset = phaseRef.current * wavefrontSpacing
       for (let distance = 1.3 + movingOffset; distance < selectedLength - 0.5; distance += wavefrontSpacing) {
         const centre = [direction[0] * distance, direction[1] * distance, 0]
-        const halfAcross = 2.45
-        const halfVertical = 2.25
+      const halfAcross = 2.45 * 0.5
+      const halfVertical = 2.25 * 0.5
         const corner = (acrossScale, verticalScale) => [
           centre[0] + across[0] * acrossScale,
           centre[1] + across[1] * acrossScale,
@@ -1336,8 +1329,8 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         ]
         fillFace(
           [corner(-halfAcross, -halfVertical), corner(halfAcross, -halfVertical), corner(halfAcross, halfVertical), corner(-halfAcross, halfVertical)],
-          'rgba(83, 220, 245, 0.055)',
-          'rgba(112, 233, 252, 0.46)',
+          laserColourWithAlpha(0.055),
+          laserColourWithAlpha(0.46),
           1.05,
         )
       }
@@ -1348,7 +1341,7 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         strokeLine([[markerX, 0, floorZ + 0.2], [markerX, markerY, floorZ + 0.2]], 'rgba(255, 212, 119, 0.62)', 1)
       }
 
-      label([config.screenDistance * 0.5, -screenHalfWidth - 0.35, floorZ], 'D = ' + formatValue(config.screenDistance) + ' units', '#7897a3', 'center', 9)
+      label([config.screenDistance * 0.5, -observationHalfWidth - 0.35, floorZ], 'D = ' + formatValue(config.screenDistance) + ' cm', '#7897a3', 'center', 9)
     }
 
     drawRef.current = draw
@@ -1388,7 +1381,7 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       || Math.hypot(event.clientX - dragRef.current.startX, event.clientY - dragRef.current.startY) > 5
     dragRef.current = { ...dragRef.current, x: event.clientX, y: event.clientY, moved }
     yawRef.current += movementX * 0.008
-    pitchRef.current = clamp(pitchRef.current + movementY * 0.006, -0.62, 0.62)
+    pitchRef.current = clamp(pitchRef.current + movementY * 0.006, 0, 0.62)
     drawRef.current?.(performance.now(), false)
   }
 
@@ -1408,8 +1401,8 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
   }
 
   const resetView = () => {
-    yawRef.current = -0.3
-    pitchRef.current = -0.22
+    yawRef.current = DEFAULT_APPARATUS_YAW
+    pitchRef.current = DEFAULT_APPARATUS_PITCH
     drawRef.current?.(performance.now(), false)
   }
 
@@ -1419,14 +1412,15 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         ref={canvasRef}
         className="grating-3d-canvas"
         role="img"
-        aria-label="Rotatable three-dimensional diffraction grating apparatus showing a laser, equally spaced slits, principal-order rays, aligned wavefronts and the observation screen. Click a labelled screen maximum to select its order."
+        aria-label="Rotatable schematic three-dimensional diffraction grating apparatus showing a laser, a dense grating with one hundred illuminated lines, principal-order rays, aligned wavefronts and a wide observation screen. Wavelength, spacing and screen distance are shared with the other views. Click a labelled screen maximum to select its order."
         onPointerDown={beginRotate}
         onPointerMove={rotate}
         onPointerUp={finishRotate}
         onPointerCancel={finishRotate}
       />
       <div className="grating-3d-heading">
-        <strong>Principal-order construction</strong>
+        <strong>Experimental arrangement · schematic</strong>
+        <span>λ, d and D shared · N fixed at 100 · component sizes not to scale</span>
         <span>Drag to rotate · click a screen maximum to select it</span>
       </div>
       <button className="grating-reset-view" type="button" onClick={resetView}>Reset view</button>
@@ -1436,7 +1430,7 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         <span>θ = {formatAngle(activeTheta)}</span>
         <span>d sin θ = nλ</span>
         {orderOnScreen && <span>screen position</span>}
-        {orderOnScreen && <strong>{formatValue(activeScreenPosition)} units</strong>}
+        {orderOnScreen && <strong>{formatValue(activeScreenPosition)} cm</strong>}
         {!orderOnScreen && <em>Beyond this screen’s edge</em>}
       </div>
       <div className="grating-order-picker" role="group" aria-label="Select a principal diffraction order">
@@ -1721,6 +1715,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const screenTop = toY(screenHalfHeight)
   const screenBottom = toY(-screenHalfHeight)
   const screenHeight = screenBottom - screenTop
+  const showObservationScreen = !farFieldView || activeFieldZoom === 1
   const wavelengthPixels = config.wavelength * scale
   const phaseFrontSpacing = wavelengthPixels / 2
   const frontCount = Math.ceil((-world.minX * scale) / phaseFrontSpacing) + 2
@@ -2137,6 +2132,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     : config.screenDistance * Math.tan(selectedAngle)
   const selectedScreenY = selectedScreenPosition == null ? null : toY(selectedScreenPosition)
   const selectedHitsScreen = selectedScreenPosition != null && Math.abs(selectedScreenPosition) <= screenHalfHeight
+  const selectedMarkerOnScreen = showObservationScreen && selectedHitsScreen
   const selectedTangent = selectedAngle == null ? 0 : Math.tan(selectedAngle)
   const selectedRayLimitX = farFieldView ? fieldEndX : config.screenDistance
   const selectedRayEndX = selectedAngle == null || Math.abs(selectedTangent) < 1e-8
@@ -2369,22 +2365,24 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </g>
         )}
 
-        <g className="observation-screen">
-          <line x1={screenX} y1={screenTop} x2={screenX} y2={screenBottom} />
-          {screenBands.map((band, index) => (
-            <rect
-              key={index}
-              x={screenX + 5}
-              y={band.y - screenHeight / bandCount / 2}
-              width={4 + band.intensity * 26}
-              height={screenHeight / bandCount + 0.35}
-              style={{ opacity: 0.08 + band.intensity * 0.92 }}
-            />
-          ))}
-          <text className="apparatus-label" x={screenX} y={screenBottom + 17} textAnchor="middle">
-            screen · {formatValue(screenHalfHeight * 2)} units high
-          </text>
-        </g>
+        {showObservationScreen && (
+          <g className="observation-screen">
+            <line x1={screenX} y1={screenTop} x2={screenX} y2={screenBottom} />
+            {screenBands.map((band, index) => (
+              <rect
+                key={index}
+                x={screenX + 5}
+                y={band.y - screenHeight / bandCount / 2}
+                width={4 + band.intensity * 26}
+                height={screenHeight / bandCount + 0.35}
+                style={{ opacity: 0.08 + band.intensity * 0.92 }}
+              />
+            ))}
+            <text className="apparatus-label" x={screenX} y={screenBottom + 17} textAnchor="middle">
+              screen · {formatValue(screenHalfHeight * 2)} units high
+            </text>
+          </g>
+        )}
 
         {viewMode !== 'principal-orders' && selectedAngle != null && (config.kind !== 'double-slit' || selectedHitsScreen) && (
           <g className={'field-selection' + (selectedLocus ? ' ' + selectedLocus.overlapType : '')}>
@@ -2400,13 +2398,13 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             ) : (
               <line x1={barrierX + 3} y1={centreY} x2={toX(selectedRayEndX)} y2={toY(selectedRayEndY)} />
             )}
-            {selectedHitsScreen && <circle cx={screenX} cy={selectedScreenY} r="7" />}
+            {selectedMarkerOnScreen && <circle cx={screenX} cy={selectedScreenY} r="7" />}
             <text
-              x={selectedHitsScreen ? screenX - 12 : toX(selectedRayEndX) - 9}
-              y={selectedHitsScreen ? selectedScreenY - 11 : toY(selectedRayEndY) + (selectedRayEndY >= 0 ? 15 : -9)}
+              x={selectedMarkerOnScreen ? screenX - 12 : toX(selectedRayEndX) - 9}
+              y={selectedMarkerOnScreen ? selectedScreenY - 11 : toY(selectedRayEndY) + (selectedRayEndY >= 0 ? 15 : -9)}
               textAnchor="end"
             >
-              {formatAngle(selectedAngle)}{selectedHitsScreen ? '' : ' · off screen'}
+              {formatAngle(selectedAngle)}{showObservationScreen && !selectedHitsScreen ? ' · off screen' : ''}
             </text>
           </g>
         )}
@@ -2499,7 +2497,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
       )}
       <span className="field-scale-note">
         {farFieldView && fieldZoom > 1
-          ? fieldZoom + "× view · screen remains at D"
+          ? fieldZoom + "× view · screen hidden"
           : viewMode === 'principal-orders' ? "Hover a slit to trace all of its moving crests" : viewMode === 'intensity' ? "Intensity heatmap · bright = stronger superposition" : viewMode === 'instantaneous' ? "Displacement now · hue = direction · brightness = magnitude" : "Dynamically similar wave model · no magnified inset"}
       </span>
     </div>
@@ -2517,7 +2515,25 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
   const doubleSlit = config.kind === 'double-slit'
   const halfRange = config.screenHalfHeight
   const sampleCount = 1201
-  const xValues = Array.from({ length: sampleCount }, (_, index) => -halfRange + (index / (sampleCount - 1)) * halfRange * 2)
+  const maximumOrder = Math.floor(config.spacing / config.wavelength)
+  const baseXValues = Array.from({ length: sampleCount }, (_, index) => -halfRange + (index / (sampleCount - 1)) * halfRange * 2)
+  // A many-slit grating produces peaks too narrow for a uniform screen sample to
+  // reliably land on their centres. Add the exact order positions and a dense
+  // cluster spanning two minima on either side of every visible order.
+  const orderXValues = doubleSlit
+    ? []
+    : Array.from({ length: maximumOrder * 2 + 1 }, (_, index) => index - maximumOrder)
+        .flatMap((order) => Array.from({ length: 25 }, (_, sampleIndex) => {
+          const fractionalOrder = order + (sampleIndex - 12) / (6 * config.sourceCount)
+          const sine = fractionalOrder * config.wavelength / config.spacing
+          if (Math.abs(sine) >= 1) return null
+          const value = Math.tan(Math.asin(sine)) * config.screenDistance
+          return Math.abs(value) <= halfRange ? value : null
+        }))
+        .filter((value) => value != null)
+  const xValues = [...baseXValues, ...orderXValues]
+    .sort((first, second) => first - second)
+    .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 1e-8)
   const thetaForX = (value) => Math.atan(value / config.screenDistance)
   const intensityValues = xValues.map((value) => interferenceIntensity(config, thetaForX(value)))
   const effectiveApertureWidth = doubleSlit ? config.slitWidth : Math.min(0.45, config.spacing * 0.3)
@@ -2538,7 +2554,6 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         (index === 0 ? "M" : "L") + toX(xValues[index]).toFixed(2) + "," + toY(value).toFixed(2)
       )).join(" ")
     : null
-  const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const visibleOrderLimit = doubleSlit
     ? Math.min(maximumOrder, Math.ceil(halfRange * config.spacing / (config.wavelength * config.screenDistance)) + 2)
     : maximumOrder
@@ -2593,7 +2608,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
   return (
     <figure className={"multi-profile" + (expanded ? " expanded" : "")}>
       <figcaption>
-        <span><strong>Screen intensity</strong><small>same ±{formatValue(halfRange)} unit screen scale</small></span>
+        <span><strong>Screen intensity</strong><small>same ±{formatValue(halfRange)} {doubleSlit ? 'unit' : 'cm'} screen scale</small></span>
         <span>Intensity ∝ amplitude²</span>
       </figcaption>
       <svg
@@ -2666,8 +2681,8 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
             <circle cx={toX(selectedValue)} cy={toY(interferenceIntensity(config, selectedAngle))} r="5" />
           </g>
         )}
-        <text className="profile-end-label" x={left} y={height - 7} textAnchor="start">−{formatValue(halfRange)} units</text>
-        <text className="profile-end-label" x={right} y={height - 7} textAnchor="end">+{formatValue(halfRange)} units</text>
+        <text className="profile-end-label" x={left} y={height - 7} textAnchor="start">−{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+        <text className="profile-end-label" x={right} y={height - 7} textAnchor="end">+{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
       </svg>
       <p>Click the profile to inspect the contributing waves at that point.</p>
     </figure>
@@ -2869,6 +2884,11 @@ function InterferenceInvestigation({ kind, onHome }) {
     screenHalfHeight: 9.1,
     sourceCount: doubleSlit ? 2 : sourceCount,
   }), [kind, wavelength, spacing, slitWidth, screenDistance, doubleSlit, sourceCount])
+  const displayedConfig = useMemo(() => (
+    !doubleSlit && fieldView === 'apparatus-3d'
+      ? { ...config, sourceCount: 100 }
+      : config
+  ), [config, doubleSlit, fieldView])
   const fringeSpacing = config.wavelength * screenDistance / config.spacing
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const positiveOrders = Array.from({ length: maximumOrder }, (_, index) => index + 1)
@@ -2880,6 +2900,13 @@ function InterferenceInvestigation({ kind, onHome }) {
   useEffect(() => {
     if (!doubleSlit) setSelectedOrder((current) => clamp(current, -maximumOrder, maximumOrder))
   }, [doubleSlit, maximumOrder])
+
+  useEffect(() => {
+    if (!doubleSlit && fieldView === 'apparatus-3d' && wavelength > 1.2) {
+      setWavelength(1.2)
+      setSelectedAngle(null)
+    }
+  }, [doubleSlit, fieldView, wavelength])
 
   const updateSeparation = (value) => {
     setSpacing(value)
@@ -2925,7 +2952,17 @@ function InterferenceInvestigation({ kind, onHome }) {
 
       <section className="multi-shell" aria-label={title + " interactive investigation"}>
         <div className="multi-toolbar">
-          <RangeControl id={kind + "-wavelength"} label="Wavelength, λ" value={wavelength} min={doubleSlit ? 0.5 : 0.45} max={doubleSlit ? 4.5 : 2.5} step="0.05" unit=" units" onChange={updateGeometry(setWavelength)} />
+          <RangeControl
+            id={kind + "-wavelength"}
+            label="Wavelength, λ"
+            value={wavelength}
+            min={doubleSlit ? 0.5 : 0.38}
+            max={doubleSlit ? 4.5 : fieldView === 'apparatus-3d' ? 1.2 : 2.5}
+            step={!doubleSlit && fieldView === 'apparatus-3d' ? "0.01" : "0.05"}
+            displayValue={doubleSlit ? null : Math.round(wavelength * 1000)}
+            unit={doubleSlit ? " units" : " nm"}
+            onChange={updateGeometry(setWavelength)}
+          />
           {doubleSlit ? (
             <>
               <RangeControl id="slit-separation" label="Slit separation, s" value={spacing} min="1" max="14" step="0.1" unit=" units" onChange={updateSeparation} />
@@ -2934,9 +2971,19 @@ function InterferenceInvestigation({ kind, onHome }) {
             </>
           ) : (
             <>
-              <RangeControl id="grating-spacing" label="Slit spacing, d" value={spacing} min="1.1" max="3" step="0.05" unit=" units" onChange={updateGeometry(setSpacing)} />
-              <RangeControl id="illuminated-slits" label="Illuminated slits, N" value={sourceCount} min="3" max="9" step="1" unit="" onChange={updateGeometry(setSourceCount)} />
-              <RangeControl id="grating-screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="22" step="0.5" unit=" units" onChange={updateGeometry(setScreenDistance)} />
+              <RangeControl id="grating-spacing" label={`d · ${Math.round(1000 / spacing)} lines mm⁻¹`} value={spacing} min="1.1" max="3" step="0.05" unit=" μm" onChange={updateGeometry(setSpacing)} />
+              <RangeControl
+                id="illuminated-slits"
+                label={fieldView === 'apparatus-3d' ? "Illuminated lines, N · fixed" : "Slits in model, N"}
+                value={fieldView === 'apparatus-3d' ? 100 : sourceCount}
+                min="3"
+                max={fieldView === 'apparatus-3d' ? 100 : 9}
+                step="1"
+                unit=""
+                onChange={updateGeometry(setSourceCount)}
+                disabled={fieldView === 'apparatus-3d'}
+              />
+              <RangeControl id="grating-screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="22" step="0.5" unit=" cm" onChange={updateGeometry(setScreenDistance)} />
             </>
           )}
           <RangeControl id={kind + "-speed"} label="Animation speed" value={playbackSpeed} min="0.25" max="2" step="0.25" unit="×" onChange={setPlaybackSpeed} disabled={fieldView === 'intensity'} />
@@ -2971,7 +3018,7 @@ function InterferenceInvestigation({ kind, onHome }) {
         <div className="multi-grid">
           {!doubleSlit && fieldView === 'apparatus-3d' ? (
             <GratingApparatus3D
-              config={config}
+              config={displayedConfig}
               selectedOrder={selectedOrder}
               onSelectOrder={selectPrincipalOrder}
               paused={paused}
@@ -2992,7 +3039,7 @@ function InterferenceInvestigation({ kind, onHome }) {
             />
           )}
           <aside className="pattern-panel">
-            <InterferenceProfile config={config} selectedAngle={selectedAngle} onSelect={selectAngle} selectedOrder={doubleSlit ? null : selectedOrder} />
+            <InterferenceProfile config={displayedConfig} selectedAngle={selectedAngle} onSelect={selectAngle} selectedOrder={doubleSlit ? null : selectedOrder} />
             <div className="equation-panel">
               <p className="eyebrow">{doubleSlit ? "Fringe model" : "Grating equation"}</p>
               {doubleSlit ? (
@@ -3011,32 +3058,32 @@ function InterferenceInvestigation({ kind, onHome }) {
                 <>
                   <div className="equation">d sin θ = nλ</div>
                   <dl>
-                    <div><dt>Slit spacing, d</dt><dd>{formatValue(config.spacing)} units</dd></div>
-                    <div><dt>Relative line density</dt><dd>{formatValue(1 / config.spacing)} per unit</dd></div>
+                    <div><dt>Slit spacing, d</dt><dd>{formatValue(config.spacing)} μm</dd></div>
+                    <div><dt>Line density</dt><dd>{Math.round(1000 / config.spacing)} lines mm⁻¹</dd></div>
                     <div><dt>Highest possible order</dt><dd>n = {maximumOrder}</dd></div>
-                    <div><dt>Resolving power</dt><dd>R = nN</dd></div>
+                    <div><dt>Resolving power</dt><dd>R = n × {displayedConfig.sourceCount}</dd></div>
                   </dl>
                   <div className="order-list" aria-label="Positive diffraction order angles">
                     {positiveOrders.length ? positiveOrders.map((order) => (
                       <span key={order}>n = {order}<strong>{formatAngle(Math.asin(order * config.wavelength / config.spacing))}</strong></span>
                     )) : <span>No first-order maximum is possible</span>}
                   </div>
-                  <p className="effect-copy">Increasing N sharpens each principal maximum. Reducing d means a greater line density, separating the orders more widely but potentially reducing how many are possible.</p>
+                  <p className="effect-copy">{fieldView === 'apparatus-3d' ? "The apparatus view fixes N = 100 illuminated lines. Reducing d means a greater line density, separating the orders more widely." : "Increasing N sharpens each principal maximum. Reducing d means a greater line density, separating the orders more widely but potentially reducing how many are possible."}</p>
                 </>
               )}
             </div>
           </aside>
         </div>
 
-        {selectedAngle == null ? (
+        {!doubleSlit && fieldView === 'apparatus-3d' ? null : selectedAngle == null ? (
           <div className="selection-prompt">
-            {!doubleSlit && (fieldView === 'apparatus-3d' || fieldView === 'principal-orders')
+            {!doubleSlit && fieldView === 'principal-orders'
               ? "Choose a principal order in the diagram or click the intensity profile to inspect its contributing waves."
               : "Select a point in the wave field or intensity profile to inspect the contributing waves."}
           </div>
         ) : (
           <MultiSourceInspector
-            config={config}
+            config={displayedConfig}
             selectedAngle={selectedAngle}
             onClose={() => setSelectedAngle(null)}
             paused={paused}
