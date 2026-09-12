@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 const APERTURES = [
   {
@@ -77,6 +77,14 @@ function IconPlay({ paused }) {
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z" /></svg>
   ) : (
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3v14H7zm7 0h3v14h-3z" /></svg>
+  )
+}
+
+function IconNudge() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 5 10 7-10 7V5Zm11 0h2v14h-2V5Z" />
+    </svg>
   )
 }
 
@@ -205,11 +213,11 @@ function WaveCanvas({
       for (let x = barrierX - wavelength + phase; x > -wavelength; x -= wavelength) {
         const glow = context.createLinearGradient(x - 5, 0, x + 5, 0)
         glow.addColorStop(0, 'rgba(61, 216, 255, 0)')
-        glow.addColorStop(0.5, 'rgba(98, 225, 255, 0.72)')
+        glow.addColorStop(0.5, 'rgba(126, 235, 255, 0.88)')
         glow.addColorStop(1, 'rgba(61, 216, 255, 0)')
         context.fillStyle = glow
         context.fillRect(x - 6, 0, 12, height)
-        context.strokeStyle = 'rgba(190, 244, 255, 0.75)'
+        context.strokeStyle = 'rgba(211, 249, 255, 0.92)'
         context.lineWidth = 1
         context.beginPath()
         context.moveTo(x, 0)
@@ -235,6 +243,16 @@ function WaveCanvas({
           const waveNumberUnits = 2 * Math.PI / wavelengthUnits
           const transmissionAmplitude = apertureToWavelength / Math.sqrt(1 + apertureToWavelength * apertureToWavelength)
           const curvature = 1 / (1 + Math.pow(apertureToWavelength / 2, 2))
+          const transitionStart = 0.75 * wavelengthUnits
+          const farFieldDistance = Math.max(
+            4 * wavelengthUnits,
+            0.65 * apertureWidthUnits * apertureWidthUnits / wavelengthUnits,
+          )
+          const spreadSlope = Math.min(2.5, wavelengthUnits / Math.max(0.08, apertureWidthUnits))
+          const smoothStep = (value) => {
+            const bounded = clamp(value, 0, 1)
+            return bounded * bounded * (3 - 2 * bounded)
+          }
 
           for (let py = 0; py < fh; py += 1) {
             const transversePosition = ((py / (fh - 1)) * height - centreY) / unitLength
@@ -250,8 +268,17 @@ function WaveCanvas({
 
               const radialDistance = Math.hypot(longitudinalPosition, transversePosition)
               const sineTheta = transversePosition / radialDistance
-              const angularEnvelope = Math.abs(sinc(Math.PI * apertureToWavelength * sineTheta))
-              const amplitude = transmissionAmplitude * angularEnvelope
+              const farFieldEnvelope = sinc(Math.PI * apertureToWavelength * sineTheta)
+              const nearFieldHalfWidth = apertureWidthUnits / 2 + longitudinalPosition * spreadSlope
+              const nearFieldEnvelope = Math.exp(
+                -0.5 * Math.pow(Math.abs(transversePosition) / Math.max(0.08, nearFieldHalfWidth), 8),
+              )
+              const farFieldEmergence = smoothStep(
+                (longitudinalPosition - transitionStart) / Math.max(0.2, farFieldDistance - transitionStart),
+              )
+              const diffractionEnvelope = nearFieldEnvelope
+                + (farFieldEnvelope - nearFieldEnvelope) * farFieldEmergence
+              const amplitude = transmissionAmplitude * diffractionEnvelope
 
               // Elliptical phase fronts give the intended qualitative transition:
               // almost circular for a small gap and almost plane for a wide one.
@@ -301,12 +328,12 @@ function WaveCanvas({
         context.beginPath()
         context.rect(barrierX, 0, width - barrierX, height)
         context.clip()
-        context.lineWidth = sourceTotal > 25 ? 0.65 : 0.9
+        context.lineWidth = sourceTotal > 25 ? 0.78 : 1.05
         const maxRadius = Math.hypot(width - barrierX, height)
         for (const source of sources) {
           for (let radius = phase + wavelength * 0.36; radius < maxRadius; radius += wavelength) {
             const fade = clamp(1 - radius / maxRadius, 0.06, 0.65)
-            context.strokeStyle = `rgba(125, 231, 255, ${fade * (sourceTotal > 25 ? 0.12 : 0.18)})`
+            context.strokeStyle = `rgba(151, 240, 255, ${fade * (sourceTotal > 25 ? 0.24 : 0.42)})`
             context.beginPath()
             context.arc(source.x, source.y, radius, -Math.PI / 2, Math.PI / 2)
             context.stroke()
@@ -656,7 +683,7 @@ function HuygensExplorer({ onHome }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>Wave Interference Explorer</span>
         </button>
-        <span className="curriculum-tag">Huygens’ wavelets · A-level Physics</span>
+        <span className="curriculum-tag">Huygens’ wavelets</span>
       </header>
 
       <section className="intro" id="top">
@@ -917,14 +944,6 @@ function HuygensExplorer({ onHome }) {
         </div>
       </section>
 
-      <footer>
-        <span>Built around the common UK A-level treatment of diffraction.</span>
-        <span className="footer-links">
-          <a href="https://www.aqa.org.uk/subjects/physics/a-level/physics-7408/specification/subject-content/waves" target="_blank" rel="noreferrer">AQA Waves</a>
-          <a href="https://qualifications.pearson.com/content/dam/pdf/A%20Level/Physics/2015/Specification%20and%20sample%20assessments/pearsonedexcel-alevel-physics-spec.pdf" target="_blank" rel="noreferrer">Edexcel Physics</a>
-          <a href="https://www.ocr.org.uk/Images/171726-specification-accredited-a-level-gce-physics-a-h556.pdf" target="_blank" rel="noreferrer">OCR Physics A</a>
-        </span>
-      </footer>
     </main>
   )
 }
@@ -1673,18 +1692,449 @@ function LegacyMultiSlitField({ config, selectedAngle, onSelect, paused, playbac
   )
 }
 
-function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed, viewMode, selectedOrder = 0, onSelectOrder, fieldZoom = 1, onFieldZoom }) {
+function PathDifferenceField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, stepFrameCount = 4, showFringeGeometry = false, onToggleFringeGeometry }) {
+  const svgRef = useRef(null)
+  const draggingRef = useRef(false)
+  const readoutDragRef = useRef(null)
+  const geometryDragRef = useRef(null)
+  const lastStepSignalRef = useRef(stepSignal)
+  const [phase, setPhase] = useState(0)
+  const [readoutOffset, setReadoutOffset] = useState({ x: 0, y: 0 })
+  const [geometryOffset, setGeometryOffset] = useState({ x: 0, y: 0 })
+  const width = 900
+  const height = 510
+  const barrierX = 112
+  const centreY = height / 2
+  const spatialScale = 25
+  const screenX = barrierX + config.screenDistance * spatialScale
+  const verticalScale = spatialScale
+  const screenTop = centreY - config.screenHalfHeight * spatialScale
+  const screenBottom = centreY + config.screenHalfHeight * spatialScale
+  const maximumAngle = Math.atan(config.screenHalfHeight / config.screenDistance)
+  const angle = clamp(selectedAngle ?? 0, -maximumAngle, maximumAngle)
+  const screenY = config.screenDistance * Math.tan(angle)
+  const target = { x: screenX, y: centreY - screenY * verticalScale }
+  const apertureHalfHeight = Math.max(7, config.slitWidth * verticalScale / 2)
+  const sourceWorldYs = [config.spacing / 2, -config.spacing / 2]
+  const sources = sourceWorldYs.map((worldY, index) => {
+    const point = { x: barrierX, y: centreY - worldY * verticalScale }
+    const physicalLength = Math.hypot(config.screenDistance, screenY - worldY)
+    const dx = target.x - point.x
+    const dy = target.y - point.y
+    const displayLength = Math.hypot(dx, dy)
+    return {
+      index,
+      worldY,
+      point,
+      physicalLength,
+      dx,
+      dy,
+      displayLength,
+      normalX: -dy / displayLength,
+      normalY: dx / displayLength,
+    }
+  })
+  const signedPathDifference = sources[1].physicalLength - sources[0].physicalLength
+  const pathDifference = Math.abs(signedPathDifference)
+  const phaseCycles = pathDifference / config.wavelength
+  const nearestWhole = Math.round(phaseCycles)
+  const nearestHalf = Math.round(phaseCycles - 0.5) + 0.5
+  const wholeError = Math.abs(phaseCycles - nearestWhole)
+  const halfError = Math.abs(phaseCycles - nearestHalf)
+  const interferenceState = wholeError <= 0.075
+    ? { className: 'constructive', label: 'CREST MEETS CREST · CONSTRUCTIVE' }
+    : halfError <= 0.075
+      ? { className: 'destructive', label: 'CREST MEETS TROUGH · DESTRUCTIVE' }
+      : { className: 'partial', label: `PARTIAL INTERFERENCE · ${Math.round((phaseCycles % 1) * 360)}° OFFSET` }
+
+  useEffect(() => {
+    if (paused) return undefined
+    let frameId
+    let previous = performance.now()
+    let accumulated = 0
+    const tick = (now) => {
+      const elapsed = Math.min(0.08, (now - previous) / 1000)
+      previous = now
+      accumulated += elapsed
+      if (accumulated >= 1 / 30) {
+        const step = accumulated
+        accumulated = 0
+        setPhase((current) => (current + step * playbackSpeed * Math.PI * 1.45) % (Math.PI * 2))
+      }
+      frameId = requestAnimationFrame(tick)
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [paused, playbackSpeed])
+
+  useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0) return
+    const frameAdvance = (stepFrameCount / 30) * playbackSpeed * Math.PI * 1.45
+    setPhase((current) => (current + stepCount * frameAdvance) % (Math.PI * 2))
+  }, [stepSignal, stepFrameCount, paused, playbackSpeed])
+
+  const pointAlongPath = (path, physicalDistance, offset = 0) => {
+    const fraction = clamp(physicalDistance / path.physicalLength, 0, 1)
+    return {
+      x: path.point.x + path.dx * fraction + path.normalX * offset,
+      y: path.point.y + path.dy * fraction + path.normalY * offset,
+    }
+  }
+  const makeWavePath = (path, startDistance = 0, endDistance = path.physicalLength) => {
+    const span = Math.max(0, endDistance - startDistance)
+    const sampleCount = Math.max(2, Math.ceil(280 * span / path.physicalLength) + 1)
+    return Array.from({ length: sampleCount }, (_, index) => {
+    const distance = startDistance + (index / (sampleCount - 1)) * span
+    const displacement = Math.cos(Math.PI * 2 * distance / config.wavelength - phase) * 5.2
+    const point = pointAlongPath(path, distance, displacement)
+    return `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`
+    }).join(' ')
+  }
+  const phaseMarkers = (path, trough = false) => {
+    const movingOffset = (phase / (Math.PI * 2)) * config.wavelength + (trough ? config.wavelength / 2 : 0)
+    const firstIndex = Math.ceil(-movingOffset / config.wavelength)
+    const markers = []
+    for (let index = firstIndex; ; index += 1) {
+      const distance = movingOffset + index * config.wavelength
+      if (distance > path.physicalLength) break
+      if (distance < 0.08 * config.wavelength || distance > path.physicalLength - 0.08 * config.wavelength) continue
+      const point = pointAlongPath(path, distance)
+      markers.push({ key: `${path.index}-${trough ? 't' : 'c'}-${index}`, ...point })
+    }
+    return markers
+  }
+  const angleArc = Array.from({ length: 25 }, (_, index) => {
+    const arcAngle = angle * index / 24
+    return `${index === 0 ? 'M' : 'L'}${(barrierX + 48 * Math.cos(arcAngle)).toFixed(2)},${(centreY - 48 * Math.sin(arcAngle)).toFixed(2)}`
+  }).join(' ')
+  const longerPath = sources.reduce((longest, path) => path.physicalLength > longest.physicalLength ? path : longest)
+  const bracketOffset = signedPathDifference >= 0 ? 17 : -17
+  const bracketStart = pointAlongPath(longerPath, 0, bracketOffset)
+  const bracketEnd = pointAlongPath(longerPath, pathDifference, bracketOffset)
+  const bracketMid = {
+    x: (bracketStart.x + bracketEnd.x) / 2 + longerPath.normalX * bracketOffset * 0.65,
+    y: (bracketStart.y + bracketEnd.y) / 2 + longerPath.normalY * bracketOffset * 0.65,
+  }
+  const extraPathLabel = {
+    x: clamp(Math.max(bracketEnd.x, bracketMid.x) + 18, barrierX + 34, screenX - 116),
+    y: clamp(bracketMid.y + (longerPath.index === 0 ? -19 : 17), 27, height - 40),
+  }
+  const shorterPath = sources.find((path) => path.index !== longerPath.index)
+  const projectedPathDifference = Math.abs(config.spacing * Math.sin(angle))
+  const projectionFoot = pointAlongPath(longerPath, projectedPathDifference)
+  const projectionDx = shorterPath.point.x - projectionFoot.x
+  const projectionDy = shorterPath.point.y - projectionFoot.y
+  const projectionLength = Math.max(0.001, Math.hypot(projectionDx, projectionDy))
+  const projectionUnit = { x: projectionDx / projectionLength, y: projectionDy / projectionLength }
+  const rayUnit = { x: longerPath.dx / longerPath.displayLength, y: longerPath.dy / longerPath.displayLength }
+  const rightAnglePath = [
+    { x: projectionFoot.x - rayUnit.x * 7, y: projectionFoot.y - rayUnit.y * 7 },
+    { x: projectionFoot.x - rayUnit.x * 7 + projectionUnit.x * 7, y: projectionFoot.y - rayUnit.y * 7 + projectionUnit.y * 7 },
+    { x: projectionFoot.x + projectionUnit.x * 7, y: projectionFoot.y + projectionUnit.y * 7 },
+  ].map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
+  const barrierSegments = [
+    [24, sources[0].point.y - apertureHalfHeight],
+    [sources[0].point.y + apertureHalfHeight, sources[1].point.y - apertureHalfHeight],
+    [sources[1].point.y + apertureHalfHeight, height - 24],
+  ].filter(([start, end]) => end > start)
+  const wavelengthPixels = config.wavelength * spatialScale
+  const incomingSpacing = Math.max(8, wavelengthPixels / 2)
+  const incomingTravel = (phase / (Math.PI * 2)) * wavelengthPixels
+  const incomingFronts = Array.from({ length: Math.ceil((barrierX - 12) / incomingSpacing) + 2 }, (_, index) => ({
+    x: barrierX - ((index * incomingSpacing - incomingTravel) % (barrierX - 12 + incomingSpacing)),
+    trough: index % 2 === 1,
+  })).filter((front) => front.x > 10 && front.x < barrierX - 5)
+  const readoutSize = { width: 268, height: 73 }
+  const readoutBase = { x: 552, y: 28 }
+  const readoutPosition = {
+    x: clamp(readoutBase.x + readoutOffset.x, 8, width - readoutSize.width - 8),
+    y: clamp(readoutBase.y + readoutOffset.y, 8, height - readoutSize.height - 8),
+  }
+  const geometryCardSize = { width: 247, height: 91 }
+  const geometryCardBase = { x: 573, y: 383 }
+  const geometryCardPosition = {
+    x: clamp(geometryCardBase.x + geometryOffset.x, 8, width - geometryCardSize.width - 8),
+    y: clamp(geometryCardBase.y + geometryOffset.y, 8, height - geometryCardSize.height - 8),
+  }
+
+  const pointerPositionInField = (event) => {
+    const svg = svgRef.current
+    const matrix = svg?.getScreenCTM()
+    if (!svg || !matrix) return null
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    return point.matrixTransform(matrix.inverse())
+  }
+  const chooseDirection = (event) => {
+    const local = pointerPositionInField(event)
+    if (!local) return
+    const chosenScreenY = clamp((centreY - local.y) / verticalScale, -config.screenHalfHeight, config.screenHalfHeight)
+    onSelect?.(Math.atan2(chosenScreenY, config.screenDistance))
+  }
+  const beginDirectionDrag = (event) => {
+    if (event.button !== 0) return
+    draggingRef.current = true
+    event.currentTarget.setPointerCapture(event.pointerId)
+    chooseDirection(event)
+  }
+  const continueDirectionDrag = (event) => {
+    if (draggingRef.current) chooseDirection(event)
+  }
+  const endDirectionDrag = (event) => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+  const beginReadoutDrag = (event) => {
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    readoutDragRef.current = {
+      pointerId: event.pointerId,
+      startX: point.x,
+      startY: point.y,
+      offsetX: readoutPosition.x - readoutBase.x,
+      offsetY: readoutPosition.y - readoutBase.y,
+    }
+  }
+  const moveReadout = (event) => {
+    const drag = readoutDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    const requestedX = readoutBase.x + drag.offsetX + point.x - drag.startX
+    const requestedY = readoutBase.y + drag.offsetY + point.y - drag.startY
+    setReadoutOffset({
+      x: clamp(requestedX, 8, width - readoutSize.width - 8) - readoutBase.x,
+      y: clamp(requestedY, 8, height - readoutSize.height - 8) - readoutBase.y,
+    })
+  }
+  const endReadoutDrag = (event) => {
+    if (readoutDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    readoutDragRef.current = null
+  }
+  const beginGeometryDrag = (event) => {
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    geometryDragRef.current = {
+      pointerId: event.pointerId,
+      startX: point.x,
+      startY: point.y,
+      offsetX: geometryCardPosition.x - geometryCardBase.x,
+      offsetY: geometryCardPosition.y - geometryCardBase.y,
+    }
+  }
+  const moveGeometryCard = (event) => {
+    const drag = geometryDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    const requestedX = geometryCardBase.x + drag.offsetX + point.x - drag.startX
+    const requestedY = geometryCardBase.y + drag.offsetY + point.y - drag.startY
+    setGeometryOffset({
+      x: clamp(requestedX, 8, width - geometryCardSize.width - 8) - geometryCardBase.x,
+      y: clamp(requestedY, 8, height - geometryCardSize.height - 8) - geometryCardBase.y,
+    })
+  }
+  const endGeometryDrag = (event) => {
+    if (geometryDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    geometryDragRef.current = null
+  }
+
+  return (
+    <div className="multi-field-wrap path-difference-wrap">
+      <svg
+        ref={svgRef}
+        className="multi-field path-difference-field"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`Two waves travel from the slits towards one observation direction at ${formatAngle(angle)}. Their path difference is ${formatValue(pathDifference)} units, or ${formatValue(phaseCycles)} wavelengths.`}
+        onPointerDown={beginDirectionDrag}
+        onPointerMove={continueDirectionDrag}
+        onPointerUp={endDirectionDrag}
+        onPointerCancel={endDirectionDrag}
+      >
+        <defs>
+          <linearGradient id="path-difference-bg" x1="0" x2="1">
+            <stop offset="0" stopColor="#06121c" />
+            <stop offset="0.52" stopColor="#0a2130" />
+            <stop offset="1" stopColor="#071823" />
+          </linearGradient>
+        </defs>
+        <rect className="path-difference-bg" width={width} height={height} fill="url(#path-difference-bg)" />
+
+        <g className="path-incident-fronts" aria-hidden="true">
+          {incomingFronts.map((front, index) => (
+            <line className={front.trough ? 'trough' : 'crest'} key={index} x1={front.x} y1="34" x2={front.x} y2={height - 34} />
+          ))}
+        </g>
+        <g className="path-direction-label" aria-hidden="true">
+          <line x1="22" y1="66" x2={barrierX - 17} y2="66" />
+          <path d={`M${barrierX - 17} 66l-10-6v12Z`} />
+          <text x="22" y="55">coherent plane wave</text>
+        </g>
+
+        {barrierSegments.map(([start, end], index) => (
+          <line className="path-barrier" key={index} x1={barrierX} y1={start} x2={barrierX} y2={end} />
+        ))}
+        {sources.map((source) => <circle className="path-source" key={source.index} cx={source.point.x} cy={source.point.y} r="5" />)}
+        <text className="path-apparatus-label" x={barrierX - 13} y={height - 13} textAnchor="end">two coherent slits</text>
+
+        <line className="path-centre-axis" x1={barrierX} y1={centreY} x2={screenX} y2={centreY} />
+        <line className="path-selected-direction" x1={barrierX} y1={centreY} x2={target.x} y2={target.y} />
+        {showFringeGeometry && (
+          <g className="path-fringe-geometry path-fringe-geometry-underlay" aria-hidden="true">
+            <line className="geometry-hypotenuse" x1={barrierX} y1={centreY} x2={target.x} y2={target.y} />
+          </g>
+        )}
+        <path className="path-angle-arc" d={angleArc} />
+        <text className="path-angle-label" x={barrierX + 62} y={centreY - Math.sign(angle || 1) * 18}>θ = {formatAngle(angle)}</text>
+
+        {sources.map((path) => (
+          <g className="path-wave" key={path.index}>
+            <line className="path-ray" x1={path.point.x} y1={path.point.y} x2={target.x} y2={target.y} />
+            <path className="path-waveform" d={makeWavePath(path)} />
+            {path.index === longerPath.index && pathDifference > 0.03 && (
+              <path className="path-extra-wave" d={makeWavePath(path, 0, pathDifference)} />
+            )}
+            {phaseMarkers(path).map((marker) => (
+              <line className="path-phase-marker crest" key={marker.key} x1={marker.x - path.normalX * 6} y1={marker.y - path.normalY * 6} x2={marker.x + path.normalX * 6} y2={marker.y + path.normalY * 6} />
+            ))}
+            {phaseMarkers(path, true).map((marker) => (
+              <line className="path-phase-marker trough" key={marker.key} x1={marker.x - path.normalX * 5} y1={marker.y - path.normalY * 5} x2={marker.x + path.normalX * 5} y2={marker.y + path.normalY * 5} />
+            ))}
+            <text className="path-length-label" x={path.point.x + path.dx * 0.58 + path.normalX * (path.index === 0 ? -15 : 15)} y={path.point.y + path.dy * 0.58 + path.normalY * (path.index === 0 ? -15 : 15)}>
+              r{path.index + 1} = {formatValue(path.physicalLength)}
+            </text>
+          </g>
+        ))}
+
+        {pathDifference > 0.03 && (
+          <g className="path-difference-bracket">
+            <line x1={bracketStart.x} y1={bracketStart.y} x2={bracketEnd.x} y2={bracketEnd.y} />
+            <line className="cap" x1={bracketStart.x - longerPath.normalX * 5} y1={bracketStart.y - longerPath.normalY * 5} x2={bracketStart.x + longerPath.normalX * 5} y2={bracketStart.y + longerPath.normalY * 5} />
+            <line className="cap" x1={bracketEnd.x - longerPath.normalX * 5} y1={bracketEnd.y - longerPath.normalY * 5} x2={bracketEnd.x + longerPath.normalX * 5} y2={bracketEnd.y + longerPath.normalY * 5} />
+            <line className="label-leader" x1={bracketMid.x} y1={bracketMid.y} x2={extraPathLabel.x - 7} y2={extraPathLabel.y - 3} />
+            <text x={extraPathLabel.x} y={extraPathLabel.y} textAnchor="start">
+              {showFringeGeometry && <tspan className="projected-path-line" x={extraPathLabel.x} dy="0">s sin θ</tspan>}
+              <tspan x={extraPathLabel.x} dy={showFringeGeometry ? 13 : 0}>extra path Δ</tspan>
+            </text>
+          </g>
+        )}
+
+        <g className="path-screen">
+          <line x1={screenX} y1={screenTop} x2={screenX} y2={screenBottom} />
+          <circle className="path-target-halo" cx={target.x} cy={target.y} r="13" />
+          <circle className="path-target" cx={target.x} cy={target.y} r="6" />
+          <text x={screenX - 12} y="39" textAnchor="end">observation direction</text>
+          <text className="path-target-label" x={target.x - 12} y={target.y - 14} textAnchor="end">P</text>
+        </g>
+
+        {showFringeGeometry && (
+          <g className="path-fringe-geometry" aria-label="Fringe geometry for the selected observation direction">
+            <g className="path-large-triangle">
+              <line className="geometry-base" x1={barrierX} y1={centreY} x2={screenX} y2={centreY} />
+              <line className="geometry-height" x1={screenX} y1={centreY} x2={target.x} y2={target.y} />
+              <text className="geometry-base-label" x={(barrierX + screenX) / 2} y={centreY + 17} textAnchor="middle">D</text>
+              <text className="geometry-height-label" x={screenX - 10} y={(centreY + target.y) / 2} textAnchor="end">w</text>
+            </g>
+            <g className="path-small-triangle">
+              <line className="geometry-separation" x1={barrierX - 18} y1={sources[0].point.y} x2={barrierX - 18} y2={sources[1].point.y} />
+              <line className="geometry-cap" x1={barrierX - 23} y1={sources[0].point.y} x2={barrierX - 13} y2={sources[0].point.y} />
+              <line className="geometry-cap" x1={barrierX - 23} y1={sources[1].point.y} x2={barrierX - 13} y2={sources[1].point.y} />
+              <text className="geometry-separation-label" x={barrierX - 27} y={centreY + 4} textAnchor="end">s</text>
+              <line className="geometry-projection" x1={shorterPath.point.x} y1={shorterPath.point.y} x2={projectionFoot.x} y2={projectionFoot.y} />
+              <line className="geometry-projected-path" x1={longerPath.point.x} y1={longerPath.point.y} x2={projectionFoot.x} y2={projectionFoot.y} />
+              <path className="geometry-right-angle" d={rightAnglePath} />
+            </g>
+            <g
+              className="path-geometry-card"
+              transform={`translate(${geometryCardPosition.x} ${geometryCardPosition.y})`}
+              onPointerDown={beginGeometryDrag}
+              onPointerMove={moveGeometryCard}
+              onPointerUp={endGeometryDrag}
+              onPointerCancel={endGeometryDrag}
+              onClick={(event) => event.stopPropagation()}
+              aria-label="Drag the fringe-geometry explanation card to reposition it"
+            >
+              <rect width="247" height="91" rx="4" />
+              <text className="geometry-title" x="12" y="18">FRINGE GEOMETRY</text>
+              <text x="12" y="38">small triangle:  Δ ≈ s sin θ</text>
+              <text x="12" y="55">screen triangle:  tan θ = w / D</text>
+              <text className="geometry-result" x="12" y="74">bright fringe:  Δ = n<tspan className="textbook-lambda">λ</tspan></text>
+            </g>
+          </g>
+        )}
+
+        <g className="path-phase-key" transform="translate(144 34)">
+          <line className="crest" x1="0" y1="0" x2="25" y2="0" /><text x="32" y="4">crest</text>
+          <line className="trough" x1="92" y1="0" x2="117" y2="0" /><text x="124" y="4">trough</text>
+        </g>
+        <g
+          className="path-readout"
+          transform={`translate(${readoutPosition.x} ${readoutPosition.y})`}
+          onPointerDown={beginReadoutDrag}
+          onPointerMove={moveReadout}
+          onPointerUp={endReadoutDrag}
+          onPointerCancel={endReadoutDrag}
+          onClick={(event) => event.stopPropagation()}
+          aria-label="Drag the path-difference readout to reposition it"
+        >
+          <rect width={readoutSize.width} height={readoutSize.height} rx="4" />
+          <text className="path-readout-title" x="13" y="18">PATH DIFFERENCE AT P</text>
+          <text className="path-readout-value" x="13" y="41">Δ = |r₂ − r₁| = {formatValue(pathDifference)} = {formatValue(phaseCycles)}<tspan className="textbook-lambda">λ</tspan></text>
+          <text className={`path-readout-state ${interferenceState.className}`} x="13" y="61">{interferenceState.label}</text>
+        </g>
+        <text className="path-interaction-hint" x={width / 2} y={height - 14} textAnchor="middle">CLICK OR DRAG TO CHOOSE THE OBSERVATION DIRECTION</text>
+      </svg>
+      <button
+        className={"fringe-geometry-toggle" + (showFringeGeometry ? " active" : "")}
+        type="button"
+        onClick={onToggleFringeGeometry}
+        aria-pressed={showFringeGeometry}
+      >
+        {showFringeGeometry ? "Hide fringe geometry" : "Show fringe geometry"}
+      </button>
+    </div>
+  )
+}
+
+function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, stepFrameCount = 4, viewMode, selectedOrder = 0, onSelectOrder, fieldZoom = 1, onFieldZoom, showFringeGeometry = false, onToggleFringeGeometry, showOrderGeometry = false, onToggleOrderGeometry }) {
   const animationRef = useRef(null)
   const phaseRef = useRef(0)
+  const lastStepSignalRef = useRef(stepSignal)
   const principalTraceRef = useRef(0)
   const constructionVisibilityRef = useRef(1)
+  const geometryCardDragRef = useRef(null)
+  const geometryCardTextRef = useRef(null)
   const fieldRef = useRef(null)
   const [hoveredSource, setHoveredSource] = useState(null)
+  const [geometryCardOffset, setGeometryCardOffset] = useState({ x: 0, y: 0 })
+  const [geometryCardBounds, setGeometryCardBounds] = useState({ width: 230, height: 84 })
   const sourceHoverEnabled = viewMode === 'principal-orders' || viewMode === 'wavefronts'
   const width = 900
   const height = 510
   const screenlessGrating = config.kind !== 'double-slit'
   const farFieldView = config.kind !== 'double-slit' && (viewMode === 'instantaneous' || viewMode === 'intensity')
+  const fillPaneGratingView = screenlessGrating && (viewMode === 'principal-orders' || viewMode === 'wavefronts')
   const activeFieldZoom = farFieldView ? fieldZoom : 1
   const baseVerticalExtent = Math.max(9.5, (config.sourceCount - 1) * config.spacing / 2 + 0.9)
   const verticalExtent = baseVerticalExtent * activeFieldZoom
@@ -1692,18 +2142,18 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const worldMinX = -6.5
   const requestedFieldEndX = farFieldView ? config.screenDistance * activeFieldZoom : config.screenDistance
   const baseWorldMaxX = farFieldView ? Math.max(24.5, requestedFieldEndX + 2.5) : 24.5
-  const horizontalDrawingWidth = farFieldView ? width : width - padding * 2
+  const horizontalDrawingWidth = farFieldView || fillPaneGratingView ? width : width - padding * 2
   const scale = Math.min(
     horizontalDrawingWidth / (baseWorldMaxX - worldMinX),
     (height - padding * 2) / (verticalExtent * 2),
   )
-  const worldMaxX = farFieldView
+  const worldMaxX = farFieldView || fillPaneGratingView
     ? Math.max(baseWorldMaxX, worldMinX + width / scale)
     : baseWorldMaxX
   const world = { minX: worldMinX, maxX: worldMaxX, minY: -verticalExtent, maxY: verticalExtent }
   const fieldEndX = farFieldView || screenlessGrating ? worldMaxX : config.screenDistance
   const contentWidth = (world.maxX - world.minX) * scale
-  const originX = farFieldView
+  const originX = farFieldView || fillPaneGratingView
     ? -world.minX * scale
     : (width - contentWidth) / 2 - world.minX * scale
   const centreY = height / 2
@@ -1760,6 +2210,15 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   }, [viewMode, activeOrderAngle])
 
   useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0 || config.kind !== 'double-slit' || viewMode === 'intensity') return
+    const frameAdvanceInMilliseconds = stepFrameCount * (1000 / 30)
+    const periodAdvance = frameAdvanceInMilliseconds * 0.00055 * playbackSpeed / config.wavelength
+    phaseRef.current = (phaseRef.current + stepCount * periodAdvance) % 1
+  }, [stepSignal, stepFrameCount, paused, playbackSpeed, viewMode, config.kind, config.wavelength])
+
+  useEffect(() => {
     const canvas = animationRef.current
     if (!canvas) return undefined
     const context = canvas.getContext('2d')
@@ -1814,8 +2273,8 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
         if (principalOrderMode && isTrough) continue
         setWavefrontDash(isTrough, incidentFrontLength)
         context.strokeStyle = principalOrderMode
-          ? 'rgba(102, 221, 243, 0.62)'
-          : (isTrough ? 'rgba(102, 221, 243, 0.34)' : 'rgba(102, 221, 243, 0.62)')
+          ? 'rgba(142, 235, 252, 0.78)'
+          : (isTrough ? 'rgba(142, 235, 252, 0.56)' : 'rgba(174, 244, 255, 0.84)')
         context.beginPath()
         context.moveTo(x, toY(world.maxY - 0.8))
         context.lineTo(x, toY(world.minY + 0.8))
@@ -1855,10 +2314,13 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             context.globalAlpha = principalTrace.opacity * (1 - smoothFade * 0.78)
           } else {
             const sourceIsHovered = viewMode === 'wavefronts' && sourceIndex === hoveredSource
+            const brightWavefrontView = viewMode === 'wavefronts'
             context.strokeStyle = sourceIsHovered
-              ? (isTrough ? 'rgba(255, 255, 255, 0.62)' : 'rgba(255, 255, 255, 0.78)')
-              : (isTrough ? 'rgba(102, 221, 243, 0.13)' : 'rgba(102, 221, 243, 0.2)')
-            context.lineWidth = sourceIsHovered ? 0.9 : 1.25
+              ? (isTrough ? 'rgba(255, 255, 255, 0.74)' : 'rgba(255, 255, 255, 0.9)')
+              : brightWavefrontView
+                ? (isTrough ? 'rgba(142, 235, 252, 0.4)' : 'rgba(174, 244, 255, 0.62)')
+                : (isTrough ? 'rgba(134, 230, 248, 0.25)' : 'rgba(155, 239, 253, 0.38)')
+            context.lineWidth = sourceIsHovered ? 1.15 : brightWavefrontView ? 1.5 : 1.35
             context.shadowColor = 'transparent'
             context.shadowBlur = 0
             context.globalAlpha = 1
@@ -2104,7 +2566,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     }
     frameId = requestAnimationFrame(advance)
     return () => cancelAnimationFrame(frameId)
-  }, [paused, playbackSpeed, viewMode, hoveredSource, activeOrderAngle, activeFieldZoom, fieldEndX, fieldEndScreenX, config.kind, config.wavelength, config.spacing, config.slitWidth, config.sourceCount, config.screenDistance, config.screenHalfHeight])
+  }, [paused, playbackSpeed, stepSignal, viewMode, hoveredSource, activeOrderAngle, activeFieldZoom, fieldEndX, fieldEndScreenX, config.kind, config.wavelength, config.spacing, config.slitWidth, config.sourceCount, config.screenDistance, config.screenHalfHeight])
 
   const choosePoint = (event) => {
     const rect = fieldRef.current.getBoundingClientRect()
@@ -2185,6 +2647,147 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
       })
     : []
   const primarySelectedRay = selectedWavefrontRays.find((ray) => ray.primary)
+  const firstOrderGeometry = (() => {
+    if (config.kind !== 'double-slit' || viewMode !== 'wavefronts' || !showFringeGeometry) return null
+    if (config.wavelength >= config.spacing) return { possible: false }
+
+    const upperSlitY = config.spacing / 2
+    const lowerSlitY = -config.spacing / 2
+    const delta = config.wavelength
+    const screenY = doubleSlitLocusY(config, delta, config.screenDistance)
+    if (screenY == null) return { possible: false }
+
+    const theta = Math.atan2(screenY, config.screenDistance)
+    const projectedDelta = config.spacing * Math.sin(theta)
+    const footX = projectedDelta * Math.cos(theta)
+    const footY = lowerSlitY + projectedDelta * Math.sin(theta)
+    const farFieldTheta = Math.asin(config.wavelength / config.spacing)
+    const farFieldScreenY = config.screenDistance * Math.tan(farFieldTheta)
+    const smallAngleScreenY = config.wavelength * config.screenDistance / config.spacing
+    const farFieldError = Math.abs(farFieldScreenY - screenY) / Math.abs(screenY)
+    const smallAngleError = Math.abs(smallAngleScreenY - farFieldScreenY) / Math.abs(farFieldScreenY)
+    const totalPositionError = Math.abs(smallAngleScreenY - screenY) / Math.abs(screenY)
+    const errorPercent = Math.round(totalPositionError * 100)
+    let approximationTone = 'good'
+    let approximationSummary = `GOOD APPROXIMATION · ${errorPercent}% POSITION ERROR`
+    let approximationAdvice = 'The screen is far enough away and θ₁ is small.'
+    if (farFieldError > 0.05 && smallAngleError > 0.05) {
+      approximationTone = 'warning'
+      approximationSummary = `BOTH APPROXIMATIONS ARE WEAK · ${errorPercent}% ERROR`
+      approximationAdvice = 'Increase D; then reduce λ or increase s.'
+    } else if (farFieldError > 0.05) {
+      approximationTone = 'warning'
+      approximationSummary = `SCREEN TOO CLOSE FOR PARALLEL RAYS · ${errorPercent}% ERROR`
+      approximationAdvice = 'Increase D or reduce slit separation s.'
+    } else if (smallAngleError > 0.05) {
+      approximationTone = 'warning'
+      approximationSummary = `ANGLE TOO LARGE FOR SMALL-ANGLE STEP · ${errorPercent}% ERROR`
+      approximationAdvice = 'Reduce λ or increase slit separation s.'
+    }
+    const arcRadius = 2.1
+    const angleArc = Array.from({ length: 25 }, (_, index) => {
+      const angle = theta * index / 24
+      return (index === 0 ? 'M' : 'L') + toX(arcRadius * Math.cos(angle)).toFixed(2) + ',' + toY(arcRadius * Math.sin(angle)).toFixed(2)
+    }).join(' ')
+    const direction = [Math.cos(theta), Math.sin(theta)]
+    const normal = [-Math.sin(theta), Math.cos(theta)]
+    const markerSize = 0.26
+    const rightAnglePoints = [
+      [footX - direction[0] * markerSize, footY - direction[1] * markerSize],
+      [footX - direction[0] * markerSize + normal[0] * markerSize, footY - direction[1] * markerSize + normal[1] * markerSize],
+      [footX + normal[0] * markerSize, footY + normal[1] * markerSize],
+    ]
+    return {
+      possible: true,
+      theta,
+      upperSlitY,
+      lowerSlitY,
+      footX,
+      footY,
+      screenY,
+      onScreen: Math.abs(screenY) <= screenHalfHeight,
+      approximationTone,
+      approximationSummary,
+      approximationAdvice,
+      angleArc,
+      rightAnglePath: rightAnglePoints.map((point, index) => (
+        (index === 0 ? 'M' : 'L') + toX(point[0]).toFixed(2) + ',' + toY(point[1]).toFixed(2)
+      )).join(' '),
+    }
+  })()
+  useLayoutEffect(() => {
+    const textGroup = geometryCardTextRef.current
+    if (!showFringeGeometry || !textGroup) return
+    const bounds = textGroup.getBBox()
+    const measuredBounds = {
+      width: Math.ceil(bounds.x + bounds.width + 10),
+      height: Math.ceil(bounds.y + bounds.height + 6),
+    }
+    setGeometryCardBounds((current) => (
+      current.width === measuredBounds.width && current.height === measuredBounds.height
+        ? current
+        : measuredBounds
+    ))
+  }, [showFringeGeometry, firstOrderGeometry?.possible, firstOrderGeometry?.onScreen, firstOrderGeometry?.approximationSummary, firstOrderGeometry?.approximationAdvice])
+  const geometryCardScale = 1.5
+  const geometryCardWidth = geometryCardBounds.width * geometryCardScale
+  const geometryCardHeight = geometryCardBounds.height * geometryCardScale
+  const geometryCardBase = {
+    x: toX(4.2),
+    y: firstOrderGeometry?.possible
+      ? height - 119 - 3 * scale
+      : height - 86 - 3 * scale,
+  }
+  const geometryCardPosition = {
+    x: clamp(geometryCardBase.x + geometryCardOffset.x, 8, width - geometryCardWidth - 8),
+    y: clamp(geometryCardBase.y + geometryCardOffset.y, 8, height - geometryCardHeight - 8),
+  }
+  const pointerPositionInField = (event) => {
+    const svg = fieldRef.current
+    const matrix = svg?.getScreenCTM()
+    if (!svg || !matrix) return null
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    return point.matrixTransform(matrix.inverse())
+  }
+  const beginGeometryCardDrag = (event) => {
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    geometryCardDragRef.current = {
+      pointerId: event.pointerId,
+      startX: point.x,
+      startY: point.y,
+      offsetX: geometryCardPosition.x - geometryCardBase.x,
+      offsetY: geometryCardPosition.y - geometryCardBase.y,
+    }
+  }
+  const moveGeometryCard = (event) => {
+    const drag = geometryCardDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const point = pointerPositionInField(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    const requestedX = geometryCardBase.x + drag.offsetX + point.x - drag.startX
+    const requestedY = geometryCardBase.y + drag.offsetY + point.y - drag.startY
+    setGeometryCardOffset({
+      x: clamp(requestedX, 8, width - geometryCardWidth - 8) - geometryCardBase.x,
+      y: clamp(requestedY, 8, height - geometryCardHeight - 8) - geometryCardBase.y,
+    })
+  }
+  const endGeometryCardDrag = (event) => {
+    if (geometryCardDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    geometryCardDragRef.current = null
+  }
   const selectedLocus = (() => {
     if (config.kind !== 'double-slit' || selectedAngle == null) return null
 
@@ -2233,7 +2836,6 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     const angle = Math.atan(screenPosition / config.screenDistance)
     return { y, intensity: interferenceIntensity(config, angle) }
   })
-  const rulerY = height - 17
   const wavelengthGuideY = toY(-7.25)
   const wavelengthGuideX = toX(-5.9)
   const separationX = barrierX - 17
@@ -2256,6 +2858,88 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
     const theta = activeOrderAngle * index / 24
     return (index === 0 ? 'M' : 'L') + toX(2.15 * Math.cos(theta)).toFixed(2) + ',' + toY(2.15 * Math.sin(theta)).toFixed(2)
   }).join(' ')
+  const orderGeometry = (() => {
+    if (!screenlessGrating || viewMode !== 'principal-orders' || !showOrderGeometry) return null
+
+    const upperSourceIndex = Math.min(sourcePositions.length - 1, Math.floor(sourcePositions.length / 2) + (sourcePositions.length % 2 === 1 ? 1 : 0))
+    const lowerSourceIndex = Math.max(0, upperSourceIndex - 1)
+    const upperSourceY = sourcePositions[upperSourceIndex]
+    const lowerSourceY = sourcePositions[lowerSourceIndex]
+    const directionX = Math.cos(activeOrderAngle)
+    const directionY = Math.sin(activeOrderAngle)
+    const longerSourceIndex = activeOrderAngle >= 0 ? lowerSourceIndex : upperSourceIndex
+    const shorterSourceIndex = longerSourceIndex === lowerSourceIndex ? upperSourceIndex : lowerSourceIndex
+    const longerSourceY = sourcePositions[longerSourceIndex]
+    const shorterSourceY = sourcePositions[shorterSourceIndex]
+    const projectedDistance = Math.abs(config.spacing * directionY)
+    const foot = {
+      x: projectedDistance * directionX,
+      y: longerSourceY + projectedDistance * directionY,
+    }
+    const projectionVector = { x: -foot.x, y: shorterSourceY - foot.y }
+    const projectionLength = Math.max(0.001, Math.hypot(projectionVector.x, projectionVector.y))
+    const projectionUnit = { x: projectionVector.x / projectionLength, y: projectionVector.y / projectionLength }
+    const markerSize = 0.24
+    const rightAnglePath = [
+      { x: foot.x - directionX * markerSize, y: foot.y - directionY * markerSize },
+      { x: foot.x - directionX * markerSize + projectionUnit.x * markerSize, y: foot.y - directionY * markerSize + projectionUnit.y * markerSize },
+      { x: foot.x + projectionUnit.x * markerSize, y: foot.y + projectionUnit.y * markerSize },
+    ].map((point, index) => `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(2)},${toY(point.y).toFixed(2)}`).join(' ')
+
+    const tangent = Math.tan(activeOrderAngle)
+    const centralFrontX = clamp((activeRay?.endX ?? 7) * 0.42, 2.8, 6.2)
+    const centralFrontY = centralFrontX * tangent
+    const planeProjection = centralFrontX * directionX + centralFrontY * directionY
+    const contactPoint = (sourceY) => {
+      const travel = planeProjection - sourceY * directionY
+      return { x: travel * directionX, y: sourceY + travel * directionY }
+    }
+    const upperContact = contactPoint(upperSourceY)
+    const lowerContact = contactPoint(lowerSourceY)
+    const frontCentre = {
+      x: (upperContact.x + lowerContact.x) / 2,
+      y: (upperContact.y + lowerContact.y) / 2,
+    }
+    const frontHalfExtent = Math.max(1.15, config.spacing * 0.9)
+    const frontStart = {
+      x: frontCentre.x - directionY * frontHalfExtent,
+      y: frontCentre.y + directionX * frontHalfExtent,
+    }
+    const frontEnd = {
+      x: frontCentre.x + directionY * frontHalfExtent,
+      y: frontCentre.y - directionX * frontHalfExtent,
+    }
+    const rayEnd = (sourceY) => {
+      const verticalLimit = verticalExtent - 0.45
+      const endX = Math.abs(tangent) < 1e-8
+        ? worldMaxX - 0.5
+        : tangent > 0
+          ? Math.min(worldMaxX - 0.5, (verticalLimit - sourceY) / tangent)
+          : Math.min(worldMaxX - 0.5, (-verticalLimit - sourceY) / tangent)
+      return { x: Math.max(0, endX), y: sourceY + Math.max(0, endX) * tangent }
+    }
+    const upperEnd = rayEnd(upperSourceY)
+    const lowerEnd = rayEnd(lowerSourceY)
+    return {
+      upperSourceIndex,
+      lowerSourceIndex,
+      upperSourceY,
+      lowerSourceY,
+      longerSourceY,
+      shorterSourceY,
+      foot,
+      rightAnglePath,
+      upperContact,
+      lowerContact,
+      frontCentre,
+      frontStart,
+      frontEnd,
+      upperEnd,
+      lowerEnd,
+      projectedDistance,
+      orderLabel: activeOrder > 0 ? `+${activeOrder}` : `${activeOrder}`,
+    }
+  })()
 
   return (
     <div className="multi-field-wrap" style={{ '--barrier-position': (barrierX / width * 100).toFixed(2) + '%' }}>
@@ -2289,7 +2973,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </clipPath>
         </defs>
         <rect width={width} height={height} fill="transparent" />
-        {viewMode !== 'principal-orders' && (
+        {viewMode !== 'principal-orders' && viewMode !== 'wavefronts' && (
           <g className="field-grid">
             {gridXs.map((value) => <line key={"v" + value} x1={toX(value)} y1={toY(world.maxY)} x2={toX(value)} y2={toY(world.minY)} />)}
             {gridYs.map((value) => <line key={"h" + value} x1={toX(world.minX)} y1={toY(value)} x2={toX(world.maxX)} y2={toY(value)} />)}
@@ -2311,7 +2995,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             className={sourceHoverEnabled && hoveredSource === index ? 'source-trace-active' : undefined}
           >
             <circle
-              className="field-source"
+              className={'field-source' + (config.kind === 'double-slit' && viewMode === 'wavefronts' ? ' phase-visible' : '')}
               cx={barrierX + 2}
               cy={toY(sourceY)}
               r="3.2"
@@ -2328,9 +3012,11 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             )}
           </g>
         ))}
-        <text className="apparatus-label" x={barrierX} y={toY(world.minY + 0.25)} textAnchor="middle">
-          {config.kind === 'double-slit' ? "two slits" : config.sourceCount + " equally spaced slits"}
-        </text>
+        {config.kind !== 'double-slit' && (
+          <text className="apparatus-label" x={barrierX} y={toY(world.minY + 0.25)} textAnchor="middle">
+            {config.sourceCount + " equally spaced slits"}
+          </text>
+        )}
 
         {viewMode === 'principal-orders' && (
           <g className="principal-order-construction">
@@ -2394,6 +3080,77 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </g>
         )}
 
+        {orderGeometry && (
+          <g className="order-geometry-overlay" aria-label={'Path-difference geometry for principal order ' + orderGeometry.orderLabel}>
+            <rect className="order-geometry-scrim" x={barrierX + 4} y="0" width={Math.max(0, fieldEndScreenX - barrierX - 4)} height={height} />
+
+            <g className="order-geometry-rays">
+              <line x1={barrierX + 3} y1={toY(orderGeometry.upperSourceY)} x2={toX(orderGeometry.upperEnd.x)} y2={toY(orderGeometry.upperEnd.y)} />
+              <line x1={barrierX + 3} y1={toY(orderGeometry.lowerSourceY)} x2={toX(orderGeometry.lowerEnd.x)} y2={toY(orderGeometry.lowerEnd.y)} />
+            </g>
+
+            <g className="order-geometry-spacing">
+              <line className="spacing-side" x1={barrierX - 13} y1={toY(orderGeometry.upperSourceY)} x2={barrierX - 13} y2={toY(orderGeometry.lowerSourceY)} />
+              <line className="spacing-cap" x1={barrierX - 18} y1={toY(orderGeometry.upperSourceY)} x2={barrierX - 8} y2={toY(orderGeometry.upperSourceY)} />
+              <line className="spacing-cap" x1={barrierX - 18} y1={toY(orderGeometry.lowerSourceY)} x2={barrierX - 8} y2={toY(orderGeometry.lowerSourceY)} />
+              <text x={barrierX - 22} y={(toY(orderGeometry.upperSourceY) + toY(orderGeometry.lowerSourceY)) / 2 + 4} textAnchor="end">d</text>
+              <circle cx={barrierX + 2} cy={toY(orderGeometry.upperSourceY)} r="5.2" />
+              <circle cx={barrierX + 2} cy={toY(orderGeometry.lowerSourceY)} r="5.2" />
+            </g>
+
+            {activeOrder !== 0 && (
+              <g className="order-geometry-triangle">
+                <line
+                  className="projection-side"
+                  x1={barrierX + 3}
+                  y1={toY(orderGeometry.shorterSourceY)}
+                  x2={toX(orderGeometry.foot.x)}
+                  y2={toY(orderGeometry.foot.y)}
+                />
+                <line
+                  className="extra-path-side"
+                  x1={barrierX + 3}
+                  y1={toY(orderGeometry.longerSourceY)}
+                  x2={toX(orderGeometry.foot.x)}
+                  y2={toY(orderGeometry.foot.y)}
+                />
+                <path className="order-right-angle" d={orderGeometry.rightAnglePath} />
+                <text
+                  className="extra-path-label"
+                  x={(barrierX + toX(orderGeometry.foot.x)) / 2 + 7}
+                  y={(toY(orderGeometry.longerSourceY) + toY(orderGeometry.foot.y)) / 2 + (activeOrder > 0 ? 17 : -9)}
+                >
+                  Δ = d sin θ = {Math.abs(activeOrder)}<tspan className="textbook-lambda">λ</tspan>
+                </text>
+              </g>
+            )}
+
+            <g className="order-geometry-common-front">
+              <line x1={toX(orderGeometry.frontStart.x)} y1={toY(orderGeometry.frontStart.y)} x2={toX(orderGeometry.frontEnd.x)} y2={toY(orderGeometry.frontEnd.y)} />
+              <circle cx={toX(orderGeometry.upperContact.x)} cy={toY(orderGeometry.upperContact.y)} r="4" />
+              <circle cx={toX(orderGeometry.lowerContact.x)} cy={toY(orderGeometry.lowerContact.y)} r="4" />
+              <text x={toX(orderGeometry.frontCentre.x) + 11} y={toY(orderGeometry.frontCentre.y) - 12}>common crest</text>
+            </g>
+
+            <g className="order-geometry-card" transform={'translate(' + Math.max(barrierX + 75, width - 296) + ' ' + (height - 102) + ')'}>
+              <rect width="282" height="88" rx="4" />
+              <text className="order-geometry-title" x="13" y="19">PRINCIPAL ORDER · n = {orderGeometry.orderLabel}</text>
+              {activeOrder === 0 ? (
+                <>
+                  <text x="13" y="43">θ = 0°, so Δ = d sin θ = 0</text>
+                  <text className="order-geometry-result" x="13" y="67">Every slit sends a crest straight ahead.</text>
+                </>
+              ) : (
+                <>
+                  <text x="13" y="41">Adjacent slits differ by Δ = d sin θ</text>
+                  <text className="order-geometry-result" x="13" y="62">d sin θ = n<tspan className="textbook-lambda">λ</tspan></text>
+                  <text className="order-geometry-note" x="13" y="79">An integer path step keeps every crest aligned.</text>
+                </>
+              )}
+            </g>
+          </g>
+        )}
+
         {sourceHoverEnabled && (
           <g className="source-hover-targets">
             {sourcePositions.map((sourceY, index) => (
@@ -2429,9 +3186,73 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
                 style={{ opacity: 0.08 + band.intensity * 0.92 }}
               />
             ))}
-            <text className="apparatus-label" x={screenX} y={screenBottom + 17} textAnchor="middle">
-              screen · {formatValue(screenHalfHeight * 2)} units high
-            </text>
+          </g>
+        )}
+
+        {firstOrderGeometry && (
+          <g className="fringe-geometry-overlay" aria-label="First-order maximum geometry using the path-difference and screen triangles">
+            {firstOrderGeometry.possible ? (
+              <>
+                <g className="fringe-large-triangle">
+                  <line className="geometry-denominator" x1={barrierX + 3} y1={centreY} x2={screenX} y2={centreY} />
+                  <line className="geometry-numerator" x1={screenX} y1={centreY} x2={screenX} y2={toY(firstOrderGeometry.screenY)} />
+                  <line className="geometry-ray" x1={barrierX + 3} y1={centreY} x2={screenX} y2={toY(firstOrderGeometry.screenY)} />
+                  <text className="geometry-denominator-label" x={(barrierX + screenX) / 2} y={centreY + 16} textAnchor="middle">D</text>
+                  <text className="geometry-numerator-label" x={screenX - 10} y={toY(firstOrderGeometry.screenY / 2)} textAnchor="end">w</text>
+                  <path className="geometry-angle" d={firstOrderGeometry.angleArc} />
+                  <text className="geometry-angle-label" x={toX(2.35 * Math.cos(firstOrderGeometry.theta / 2))} y={toY(2.35 * Math.sin(firstOrderGeometry.theta / 2)) - 5}>θ₁</text>
+                </g>
+
+                <g className="fringe-small-triangle">
+                  <line className="geometry-parallel-ray" x1={barrierX + 3} y1={toY(firstOrderGeometry.upperSlitY)} x2={screenX} y2={toY(firstOrderGeometry.screenY)} />
+                  <line className="geometry-parallel-ray" x1={barrierX + 3} y1={toY(firstOrderGeometry.lowerSlitY)} x2={screenX} y2={toY(firstOrderGeometry.screenY)} />
+                  <line className="geometry-construction" x1={barrierX + 3} y1={toY(firstOrderGeometry.upperSlitY)} x2={toX(firstOrderGeometry.footX)} y2={toY(firstOrderGeometry.footY)} />
+                  <line className="geometry-numerator" x1={barrierX + 3} y1={toY(firstOrderGeometry.lowerSlitY)} x2={toX(firstOrderGeometry.footX)} y2={toY(firstOrderGeometry.footY)} />
+                  <path className="geometry-right-angle" d={firstOrderGeometry.rightAnglePath} />
+                  <text className="geometry-numerator-label" x={(barrierX + toX(firstOrderGeometry.footX)) / 2} y={(toY(firstOrderGeometry.lowerSlitY) + toY(firstOrderGeometry.footY)) / 2 + 30} textAnchor="middle">s sin θ₁ ≈ Δ</text>
+                </g>
+
+                <g
+                  className="fringe-geometry-equations"
+                  transform={"translate(" + geometryCardPosition.x + " " + geometryCardPosition.y + ") scale(" + geometryCardScale + ")"}
+                  onPointerDown={beginGeometryCardDrag}
+                  onPointerMove={moveGeometryCard}
+                  onPointerUp={endGeometryCardDrag}
+                  onPointerCancel={endGeometryCardDrag}
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label="Drag the first-order explanation card to reposition it"
+                >
+                  <rect width={geometryCardBounds.width} height={geometryCardBounds.height} rx="4" />
+                  <line className="geometry-status-divider" x1="12" y1="89" x2={geometryCardBounds.width - 12} y2="89" />
+                  <g ref={geometryCardTextRef}>
+                    <text className="geometry-title" x="12" y="16">FIRST-ORDER MAXIMUM · SIMILAR TRIANGLES</text>
+                    <text x="12" y="34">small triangle:  sin θ₁ = Δ / s</text>
+                    <text x="12" y="49">screen triangle:  tan θ₁ = w / D</text>
+                    <text x="12" y="64">small angle:  sin θ₁ ≈ tan θ₁</text>
+                    <text className="geometry-result" x="12" y="79">Δ = <tspan className="textbook-lambda">λ</tspan>  ⇒  w ≈ <tspan className="textbook-lambda">λ</tspan>D / s{firstOrderGeometry.onScreen ? "" : "  · beyond this screen"}</text>
+                    <text className={"geometry-status " + firstOrderGeometry.approximationTone} x="12" y="104">{firstOrderGeometry.approximationSummary}</text>
+                    <text className="geometry-guidance" x="12" y="119">{firstOrderGeometry.approximationAdvice}</text>
+                  </g>
+                </g>
+              </>
+            ) : (
+              <g
+                className="fringe-geometry-equations"
+                transform={"translate(" + geometryCardPosition.x + " " + geometryCardPosition.y + ") scale(" + geometryCardScale + ")"}
+                onPointerDown={beginGeometryCardDrag}
+                onPointerMove={moveGeometryCard}
+                onPointerUp={endGeometryCardDrag}
+                onPointerCancel={endGeometryCardDrag}
+                onClick={(event) => event.stopPropagation()}
+                aria-label="Drag the first-order explanation card to reposition it"
+              >
+                <rect width={geometryCardBounds.width} height={geometryCardBounds.height} rx="4" />
+                <g ref={geometryCardTextRef}>
+                  <text className="geometry-title" x="12" y="16">FIRST-ORDER MAXIMUM</text>
+                  <text x="12" y="35">Not possible for these values: <tspan className="textbook-lambda">λ</tspan> &gt; s.</text>
+                </g>
+              </g>
+            )}
           </g>
         )}
 
@@ -2471,29 +3292,22 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </g>
         )}
 
-        {!screenlessGrating && (
-          <g className="scale-ruler">
-            <line x1={barrierX} y1={rulerY} x2={screenX} y2={rulerY} />
-            <line x1={barrierX} y1={rulerY - 6} x2={barrierX} y2={rulerY + 6} />
-            <line x1={screenX} y1={rulerY - 6} x2={screenX} y2={rulerY + 6} />
-            <text x={(barrierX + screenX) / 2} y={rulerY - 7} textAnchor="middle">D = {formatValue(config.screenDistance)} units</text>
-          </g>
-        )}
-
         <g className="wavelength-dimension">
           <line x1={wavelengthGuideX} y1={wavelengthGuideY} x2={wavelengthGuideX + wavelengthPixels} y2={wavelengthGuideY} />
           <line x1={wavelengthGuideX} y1={wavelengthGuideY - 5} x2={wavelengthGuideX} y2={wavelengthGuideY + 5} />
           <line x1={wavelengthGuideX + wavelengthPixels} y1={wavelengthGuideY - 5} x2={wavelengthGuideX + wavelengthPixels} y2={wavelengthGuideY + 5} />
-          <text x={wavelengthGuideX + wavelengthPixels / 2} y={wavelengthGuideY - 8} textAnchor="middle">λ = {formatValue(config.wavelength)}</text>
+          <text x={wavelengthGuideX + wavelengthPixels / 2} y={wavelengthGuideY - 8} textAnchor="middle"><tspan className="textbook-lambda">λ</tspan> = {formatValue(config.wavelength)}</text>
         </g>
 
         {config.kind === 'double-slit' && (
-          <g className="slit-dimensions">
+          <g className={"slit-dimensions" + (showFringeGeometry ? " geometry-active" : "")}>
             <line x1={separationX} y1={toY(config.spacing / 2)} x2={separationX} y2={toY(-config.spacing / 2)} />
             <line x1={separationX - 4} y1={toY(config.spacing / 2)} x2={separationX + 4} y2={toY(config.spacing / 2)} />
             <line x1={separationX - 4} y1={toY(-config.spacing / 2)} x2={separationX + 4} y2={toY(-config.spacing / 2)} />
             <text x={separationX - 6} y={centreY + 3} textAnchor="end">s = {formatValue(config.spacing)}</text>
-            <text x={barrierX + 10} y={toY(config.spacing / 2) - 7}>a = {formatValue(config.slitWidth)}</text>
+            {!showFringeGeometry && (
+              <text x={barrierX + 10} y={toY(config.spacing / 2) - 7}>a = {formatValue(config.slitWidth)}</text>
+            )}
           </g>
         )}
 
@@ -2515,11 +3329,35 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           </g>
         ) : null}
 
-        <text className="field-caption" x={toX(world.minX) + 4} y={height - 5}>ONE GRID DIVISION = 1 RELATIVE UNIT</text>
-        <text className="field-caption wavefront-note" x={toX(8.1)} y={height - 5}>
-          {viewMode === 'principal-orders' ? "ONE CYAN WAVEFRONT · TRACES 6λ FROM THE SLITS · GREEN = ITS CONTRIBUTING CIRCULAR CRESTS" : viewMode === 'intensity' ? "TIME-AVERAGED INTENSITY FROM EXACT PATH LENGTHS" : viewMode === 'instantaneous' ? "SIGNED DISPLACEMENT · BRIGHTNESS = MAGNITUDE · ANIMATED" : config.kind === 'double-slit' ? "λ, a, s, D AND SCREEN USE THE SAME SCALE" : "λ, d AND THE WAVEFRONTS USE THE SAME RELATIVE SCALE"}
-        </text>
+        {config.kind !== 'double-slit' && (
+          <text className="field-caption" x={toX(world.minX) + 4} y={height - 5}>ONE GRID DIVISION = 1 RELATIVE UNIT</text>
+        )}
+        {!(config.kind === 'double-slit' && viewMode === 'wavefronts') && (
+          <text className="field-caption wavefront-note" x={toX(8.1)} y={height - 5}>
+            {viewMode === 'principal-orders' ? "ONE CYAN WAVEFRONT · TRACES 6λ FROM THE SLITS · GREEN = ITS CONTRIBUTING CIRCULAR CRESTS" : viewMode === 'intensity' ? "TIME-AVERAGED INTENSITY FROM EXACT PATH LENGTHS" : viewMode === 'instantaneous' ? "SIGNED DISPLACEMENT · BRIGHTNESS = MAGNITUDE · ANIMATED" : "λ, d AND THE WAVEFRONTS USE THE SAME RELATIVE SCALE"}
+          </text>
+        )}
       </svg>
+      {config.kind === 'double-slit' && viewMode === 'wavefronts' && (
+        <button
+          className={"fringe-geometry-toggle" + (showFringeGeometry ? " active" : "")}
+          type="button"
+          onClick={onToggleFringeGeometry}
+          aria-pressed={showFringeGeometry}
+        >
+          {showFringeGeometry ? "Hide fringe geometry" : "Show fringe geometry"}
+        </button>
+      )}
+      {screenlessGrating && viewMode === 'principal-orders' && (
+        <button
+          className={"fringe-geometry-toggle order-geometry-toggle" + (showOrderGeometry ? " active" : "")}
+          type="button"
+          onClick={onToggleOrderGeometry}
+          aria-pressed={showOrderGeometry}
+        >
+          {showOrderGeometry ? "Hide order geometry" : "Show order geometry"}
+        </button>
+      )}
       {viewMode === 'principal-orders' && (
         <div className="principal-order-picker" role="group" aria-label="Select a principal diffraction order">
           <span>Principal order, n</span>
@@ -2559,16 +3397,18 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           ))}
         </div>
       )}
-      <span className="field-scale-note">
-        {farFieldView
-          ? fieldZoom + "× far-field view · no screen"
-          : viewMode === 'principal-orders' ? "Hover a slit to trace all of its moving crests" : viewMode === 'intensity' ? "Intensity heatmap · bright = stronger superposition" : viewMode === 'instantaneous' ? "Displacement now · hue = direction · brightness = magnitude" : "Dynamically similar wave model · no magnified inset"}
-      </span>
+      {(farFieldView || viewMode !== 'wavefronts') && (
+        <span className="field-scale-note">
+          {farFieldView
+            ? fieldZoom + "× far-field view · no screen"
+            : viewMode === 'principal-orders' ? "Hover a slit to trace all of its moving crests" : viewMode === 'intensity' ? "Intensity heatmap · bright = stronger superposition" : "Displacement now · hue = direction · brightness = magnitude"}
+        </span>
+      )}
     </div>
   )
 }
 
-function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = null, expanded = false, angularScale = false, snapToPrincipalOrders = false }) {
+function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = null, expanded = false, angularScale = false, snapToPrincipalOrders = false, highlightOrder = null }) {
   const profileRef = useRef(null)
   const width = 720
   const height = expanded ? 340 : 270
@@ -2639,6 +3479,30 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
     .filter(Boolean)
   const selectedOrderPoint = !doubleSlit
     ? orders.find(({ order }) => order === selectedOrder) ?? null
+    : null
+  const geometryPeakPoint = doubleSlit && highlightOrder != null
+    ? orders.find(({ order }) => order === highlightOrder) ?? null
+    : null
+  const geometryPeakHighlight = geometryPeakPoint
+    ? (() => {
+        const minimumValues = [-0.5, 0.5]
+          .map((offset) => doubleSlitLocusY(
+            config,
+            (geometryPeakPoint.order + offset) * config.wavelength,
+            config.screenDistance,
+          ))
+          .filter((value) => value != null)
+        if (minimumValues.length !== 2) return null
+        const start = clamp(toX(Math.min(...minimumValues)), left, right)
+        const end = clamp(toX(Math.max(...minimumValues)), left, right)
+        const angle = thetaForX(geometryPeakPoint.value)
+        return {
+          centre: toX(geometryPeakPoint.value),
+          peakY: toY(interferenceIntensity(config, angle)),
+          start,
+          width: Math.max(10, end - start),
+        }
+      })()
     : null
   const selectedIntensity = selectedAngle == null ? 0 : interferenceIntensity(config, selectedAngle)
   const selectedOrderHighlight = selectedOrderPoint && selectedAngle != null && selectedIntensity >= 0.15
@@ -2712,6 +3576,11 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
               <rect x={selectedOrderHighlight.start} y={top - 4} width={selectedOrderHighlight.width} height={bottom - top + 8} />
             </clipPath>
           )}
+          {geometryPeakHighlight && (
+            <clipPath id="fringe-geometry-peak-clip">
+              <rect x={geometryPeakHighlight.start} y={top - 4} width={geometryPeakHighlight.width} height={bottom - top + 8} />
+            </clipPath>
+          )}
         </defs>
         <rect x={left} y={top} width={right - left} height={bottom - top} fill="transparent" />
         <line className="profile-axis" x1={left} y1={bottom} x2={right} y2={bottom} />
@@ -2748,6 +3617,19 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         <path className="multi-profile-area" d={areaPath} fill={"url(#multi-profile-fill-" + config.kind + ")"} />
         {envelopePath && <path className="envelope-line" d={envelopePath} />}
         <path className="multi-profile-line" d={linePath} />
+        {geometryPeakHighlight && (
+          <g className="fringe-geometry-profile-peak" aria-label="First-order maximum highlighted">
+            <path d={linePath} clipPath="url(#fringe-geometry-peak-clip)" />
+            <circle cx={geometryPeakHighlight.centre} cy={geometryPeakHighlight.peakY} r="4.5" />
+            <text
+              x={geometryPeakHighlight.centre}
+              y={Math.max(top + 11, geometryPeakHighlight.peakY - 11)}
+              textAnchor="middle"
+            >
+              +1 · FIRST MAXIMUM
+            </text>
+          </g>
+        )}
         {selectedOrderHighlight && (
           <>
             <path
@@ -2930,7 +3812,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
 
       <aside className="inspector-details">
         <header className="inspector-header">
-          <p className="eyebrow">{angleInspector ? "Angle inspector · selected far-field direction" : "Point inspector · fixed observation point"}</p>
+          <p className="eyebrow">{angleInspector ? "Angle inspector · selected far-field direction" : "Interference at P · selected screen position"}</p>
           <h2 id="multi-inspector-title">{config.sourceCount} coherent waves at {formatAngle(selectedAngle)}</h2>
         </header>
         <div className="inspector-status">
@@ -2969,9 +3851,12 @@ function InterferenceInvestigation({ kind, onHome }) {
   const [screenDistance, setScreenDistance] = useState(doubleSlit ? 18 : 16)
   const [sourceCount, setSourceCount] = useState(7)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [animationStep, setAnimationStep] = useState(0)
   const [fieldZoom, setFieldZoom] = useState(1)
   const [paused, setPaused] = useState(false)
   const [fieldView, setFieldView] = useState(doubleSlit ? 'wavefronts' : 'apparatus-3d')
+  const [showFringeGeometry, setShowFringeGeometry] = useState(false)
+  const [showOrderGeometry, setShowOrderGeometry] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState(doubleSlit ? 0 : 1)
   const [selectedAngle, setSelectedAngle] = useState(null)
   const config = useMemo(() => ({
@@ -2988,8 +3873,19 @@ function InterferenceInvestigation({ kind, onHome }) {
       ? { ...config, sourceCount: 100 }
       : config
   ), [config, doubleSlit, fieldView])
+  const pathDifferenceDefaultAngle = useMemo(() => {
+    const maximumVisibleAngle = Math.atan(config.screenHalfHeight / config.screenDistance)
+    const firstOrderAngle = config.wavelength < config.spacing
+      ? Math.asin(config.wavelength / config.spacing)
+      : maximumVisibleAngle * 0.68
+    return Math.min(firstOrderAngle, maximumVisibleAngle * 0.88)
+  }, [config.screenDistance, config.screenHalfHeight, config.spacing, config.wavelength])
+  const displayedSelectedAngle = doubleSlit && fieldView === 'path-difference'
+    ? selectedAngle ?? pathDifferenceDefaultAngle
+    : selectedAngle
   const usesAngularFarField = !doubleSlit && fieldView !== 'apparatus-3d'
   const fringeSpacing = config.wavelength * screenDistance / config.spacing
+  const nudgeFrameCount = wavelength <= 1 ? 2 : 4
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const positiveOrders = Array.from({ length: maximumOrder }, (_, index) => index + 1)
   const title = doubleSlit ? "Double-slit interference" : "Diffraction grating"
@@ -3019,12 +3915,54 @@ function InterferenceInvestigation({ kind, onHome }) {
     setSelectedAngle(null)
   }
 
+  const updateScreenDistance = (value) => {
+    if (doubleSlit && fieldView === 'path-difference') {
+      const fixedScreenY = screenDistance * Math.tan(displayedSelectedAngle)
+      setScreenDistance(value)
+      setSelectedAngle(Math.atan2(clamp(fixedScreenY, -config.screenHalfHeight, config.screenHalfHeight), value))
+      return
+    }
+    setScreenDistance(value)
+    setSelectedAngle(null)
+  }
+
   const selectAngle = (angle) => {
     setSelectedAngle(angle)
     if (!doubleSlit) {
       const nearestOrder = Math.round(config.spacing * Math.sin(angle) / config.wavelength)
       setSelectedOrder(clamp(nearestOrder, -maximumOrder, maximumOrder))
     }
+  }
+
+  const selectFieldAngle = (angle) => {
+    if (!doubleSlit) {
+      selectAngle(angle)
+      return
+    }
+
+    const phaseCycles = pathDifferenceAtAngle(config, angle) / config.wavelength
+    const crestOrder = Math.round(phaseCycles)
+    const troughOrder = Math.round(phaseCycles - 0.5) + 0.5
+    const crestError = Math.abs(phaseCycles - crestOrder)
+    const troughError = Math.abs(phaseCycles - troughOrder)
+    const snappedOrder = crestError <= 0.1
+      ? crestOrder
+      : troughError <= 0.1
+        ? troughOrder
+        : null
+
+    if (snappedOrder == null) {
+      setSelectedAngle(angle)
+      return
+    }
+
+    const snappedPathDifference = snappedOrder * config.wavelength
+    const snappedScreenY = doubleSlitLocusY(config, snappedPathDifference, config.screenDistance)
+    if (snappedScreenY == null || Math.abs(snappedScreenY) > config.screenHalfHeight) {
+      setSelectedAngle(angle)
+      return
+    }
+    setSelectedAngle(Math.atan2(snappedScreenY, config.screenDistance))
   }
 
   const selectPrincipalOrder = (order) => {
@@ -3039,7 +3977,7 @@ function InterferenceInvestigation({ kind, onHome }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>Wave Interference Explorer</span>
         </button>
-        <span className="curriculum-tag">{title} · A-level Physics</span>
+        <span className="curriculum-tag">{title}</span>
       </header>
 
       <section className="investigation-intro">
@@ -3067,7 +4005,7 @@ function InterferenceInvestigation({ kind, onHome }) {
             <>
               <RangeControl id="slit-separation" label="Slit separation, s" value={spacing} min="1" max="14" step="0.1" unit=" units" onChange={updateSeparation} />
               <RangeControl id="slit-width" label="Slit width, a" value={slitWidth} min="0.3" max={Math.min(2.4, spacing * 0.55)} step="0.05" unit=" units" onChange={updateGeometry(setSlitWidth)} />
-              <RangeControl id="screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="22" step="0.5" unit=" units" onChange={updateGeometry(setScreenDistance)} />
+              <RangeControl id="screen-distance" label="Screen distance, D" value={screenDistance} min="10" max="24" step="0.5" unit=" units" onChange={updateScreenDistance} />
             </>
           ) : (
             <>
@@ -3087,18 +4025,33 @@ function InterferenceInvestigation({ kind, onHome }) {
             </>
           )}
           <RangeControl id={kind + "-speed"} label="Animation speed" value={playbackSpeed} min="0.25" max="2" step="0.25" unit="×" onChange={setPlaybackSpeed} disabled={fieldView === 'intensity'} />
-          <button className="icon-button multi-pause" type="button" disabled={fieldView === 'intensity'} onClick={() => setPaused((value) => !value)}>
-            <IconPlay paused={paused || fieldView === 'intensity'} />
-            <span>{fieldView === 'intensity' ? "Static" : paused ? "Play" : "Pause"}</span>
-          </button>
+          <div className="animation-actions">
+            <button className="icon-button multi-pause" type="button" disabled={fieldView === 'intensity'} onClick={() => setPaused((value) => !value)}>
+              <IconPlay paused={paused || fieldView === 'intensity'} />
+              <span>{fieldView === 'intensity' ? "Static" : paused ? "Play" : "Pause"}</span>
+            </button>
+            {paused && doubleSlit && fieldView !== 'intensity' && (
+              <button
+                className="icon-button animation-nudge"
+                type="button"
+                onClick={() => setAnimationStep((current) => current + 1)}
+                aria-label={`Advance the wave animation by ${nudgeFrameCount} frames`}
+                title={`Advance ${nudgeFrameCount} frames`}
+              >
+                <IconNudge />
+                <span>Nudge</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="multi-display-bar">
           <span className="control-label">Field view</span>
-          <div className={'view-switcher multi-view-switcher' + (!doubleSlit ? ' five-options' : '')} role="group" aria-label="Choose field representation">
+          <div className={'view-switcher multi-view-switcher ' + (doubleSlit ? 'four-options' : 'five-options')} role="group" aria-label="Choose field representation">
             {!doubleSlit && <button className={fieldView === 'apparatus-3d' ? 'active' : ''} type="button" onClick={() => setFieldView('apparatus-3d')}>Apparatus 3D</button>}
             {!doubleSlit && <button className={fieldView === 'principal-orders' ? 'active' : ''} type="button" onClick={() => setFieldView('principal-orders')}>Principal orders</button>}
             <button className={fieldView === 'wavefronts' ? 'active' : ''} type="button" onClick={() => setFieldView('wavefronts')}>Wavefronts</button>
+            {doubleSlit && <button className={fieldView === 'path-difference' ? 'active' : ''} type="button" onClick={() => setFieldView('path-difference')}>Path difference</button>}
             <button className={fieldView === 'instantaneous' ? 'active' : ''} type="button" onClick={() => setFieldView('instantaneous')}>{doubleSlit ? 'Displacement' : 'Field'}</button>
             <button className={fieldView === 'intensity' ? 'active' : ''} type="button" onClick={() => setFieldView('intensity')}>Intensity</button>
           </div>
@@ -3107,6 +4060,8 @@ function InterferenceInvestigation({ kind, onHome }) {
               ? "Rotate the apparatus and select an order to see its common outgoing wavefront moving towards the matching screen maximum."
               : fieldView === 'principal-orders'
                 ? "Choose n and follow one common wavefront for six wavelengths. It fades at the end, then a new front begins at the grating."
+              : fieldView === 'path-difference'
+                ? "Follow the phase along two paths to one direction. The extra distance Δ determines whether crests reinforce or cancel."
               : fieldView === 'instantaneous'
               ? "The signed resultant displacement now: coral is negative, cyan is positive, and brightness shows the magnitude."
               : fieldView === 'intensity'
@@ -3124,28 +4079,50 @@ function InterferenceInvestigation({ kind, onHome }) {
               paused={paused}
               playbackSpeed={playbackSpeed}
             />
-          ) : (
-            <MultiSlitField
+          ) : doubleSlit && fieldView === 'path-difference' ? (
+            <PathDifferenceField
               config={config}
-              selectedAngle={selectedAngle}
+              selectedAngle={displayedSelectedAngle}
               onSelect={selectAngle}
               paused={paused}
               playbackSpeed={playbackSpeed}
+              stepSignal={animationStep}
+              stepFrameCount={nudgeFrameCount}
+              showFringeGeometry={showFringeGeometry}
+              onToggleFringeGeometry={() => setShowFringeGeometry((current) => !current)}
+            />
+          ) : (
+            <MultiSlitField
+              config={config}
+              selectedAngle={displayedSelectedAngle}
+              onSelect={selectFieldAngle}
+              paused={paused}
+              playbackSpeed={playbackSpeed}
+              stepSignal={animationStep}
+              stepFrameCount={nudgeFrameCount}
               viewMode={fieldView}
               selectedOrder={selectedOrder}
               onSelectOrder={selectPrincipalOrder}
               fieldZoom={fieldZoom}
               onFieldZoom={setFieldZoom}
+              showFringeGeometry={showFringeGeometry}
+              onToggleFringeGeometry={() => {
+                if (!showFringeGeometry) setSelectedAngle(null)
+                setShowFringeGeometry((current) => !current)
+              }}
+              showOrderGeometry={showOrderGeometry}
+              onToggleOrderGeometry={() => setShowOrderGeometry((current) => !current)}
             />
           )}
           <aside className="pattern-panel">
             <InterferenceProfile
               config={displayedConfig}
-              selectedAngle={selectedAngle}
+              selectedAngle={displayedSelectedAngle}
               onSelect={selectAngle}
               selectedOrder={doubleSlit ? null : selectedOrder}
               angularScale={usesAngularFarField}
               snapToPrincipalOrders={!doubleSlit && fieldView === 'principal-orders'}
+              highlightOrder={doubleSlit && fieldView === 'wavefronts' && showFringeGeometry ? 1 : null}
             />
             <div className="equation-panel">
               <p className="eyebrow">{doubleSlit ? "Fringe model" : "Grating equation"}</p>
@@ -3153,7 +4130,7 @@ function InterferenceInvestigation({ kind, onHome }) {
                 <>
                   <div className="equation">Δ = r₂ − r₁</div>
                   <div className="equation equation-secondary">far screen: Δ ≈ s sin θ</div>
-                  <div className="equation">w ≈ λD / s</div>
+                  <div className="equation">w ≈ <span className="textbook-lambda">λ</span>D / s</div>
                   <dl>
                     <div><dt>Fringe spacing</dt><dd>{formatValue(fringeSpacing)} units</dd></div>
                     <div><dt>Central maximum</dt><dd>θ = 0°</dd></div>
@@ -3163,7 +4140,7 @@ function InterferenceInvestigation({ kind, onHome }) {
                 </>
               ) : (
                 <>
-                  <div className="equation">d sin θ = nλ</div>
+                  <div className="equation">d sin θ = n<span className="textbook-lambda">λ</span></div>
                   <dl>
                     <div><dt>Slit spacing, d</dt><dd>{formatValue(config.spacing)} μm</dd></div>
                     <div><dt>Line density</dt><dd>{Math.round(1000 / config.spacing)} lines mm⁻¹</dd></div>
@@ -3182,7 +4159,7 @@ function InterferenceInvestigation({ kind, onHome }) {
           </aside>
         </div>
 
-        {!doubleSlit && (fieldView === 'apparatus-3d' || fieldView === 'principal-orders') ? null : selectedAngle == null ? (
+        {!doubleSlit && (fieldView === 'apparatus-3d' || fieldView === 'principal-orders') ? null : displayedSelectedAngle == null ? (
           <div className="selection-prompt">
             {doubleSlit
               ? "Select a point in the wave field or intensity profile to inspect the contributing waves."
@@ -3191,7 +4168,7 @@ function InterferenceInvestigation({ kind, onHome }) {
         ) : (
           <MultiSourceInspector
             config={displayedConfig}
-            selectedAngle={selectedAngle}
+            selectedAngle={displayedSelectedAngle}
             onClose={() => setSelectedAngle(null)}
             paused={paused}
             playbackSpeed={playbackSpeed}
@@ -3219,7 +4196,6 @@ function InterferenceInvestigation({ kind, onHome }) {
 
       <footer>
         <button className="footer-home" type="button" onClick={onHome}>← Choose another investigation</button>
-        <span>Built around the common UK A-level treatment of waves and superposition.</span>
       </footer>
     </main>
   )
