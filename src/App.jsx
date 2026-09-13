@@ -52,6 +52,13 @@ const MODULES = [
     status: 'Open investigation',
     accent: '#168b86',
   },
+  {
+    id: 'standing-waves',
+    title: 'Standing waves',
+    description: 'Overlap two opposing plane waves and investigate when fixed nodes form.',
+    status: 'Open investigation',
+    accent: '#b65f4b',
+  },
 ]
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
@@ -98,16 +105,27 @@ function WaveCanvas({
   showResultant,
   paused,
   playbackSpeed,
+  stepSignal = 0,
+  nudgePhaseDivisions = 120,
   inspectionPoint = null,
   onInspect,
 }) {
   const canvasRef = useRef(null)
   const modelRef = useRef(null)
+  const travelledDistanceRef = useRef(0)
+  const lastStepSignalRef = useRef(stepSignal)
   const settingsRef = useRef({ aperture, apertureWidth, wavelengthScale, measurementLabel, sourceCount, showWavelets, showResultant, paused, playbackSpeed, inspectionPoint })
 
   useEffect(() => {
     settingsRef.current = { aperture, apertureWidth, wavelengthScale, measurementLabel, sourceCount, showWavelets, showResultant, paused, playbackSpeed, inspectionPoint }
   }, [aperture, apertureWidth, wavelengthScale, measurementLabel, sourceCount, showWavelets, showResultant, paused, playbackSpeed, inspectionPoint])
+
+  useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0 || !modelRef.current) return
+    travelledDistanceRef.current += stepCount * modelRef.current.wavelength / nudgePhaseDivisions
+  }, [stepSignal, nudgePhaseDivisions, paused])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -117,7 +135,6 @@ function WaveCanvas({
     let frameId
     let lastTime = performance.now()
     let lastRenderedTime = 0
-    let travelledDistance = 0
     let width = 0
     let height = 0
     let combinedFieldCache = null
@@ -174,12 +191,12 @@ function WaveCanvas({
       lastRenderedTime = now
       const settings = settingsRef.current
       if (!settings.paused) {
-        travelledDistance += elapsed * 0.055 * settings.playbackSpeed
+        travelledDistanceRef.current += elapsed * 0.055 * settings.playbackSpeed
       }
 
       const unitLength = clamp(height * 0.085, 29, 38)
       const wavelength = unitLength * settings.wavelengthScale
-      const phase = travelledDistance % wavelength
+      const phase = travelledDistanceRef.current % wavelength
       const barrierX = width * 0.34
       const centreY = height * 0.5
       const gapHeight = unitLength * settings.apertureWidth
@@ -198,7 +215,7 @@ function WaveCanvas({
         barrierX,
         centreY,
         wavelength,
-        travelledDistance,
+        travelledDistance: travelledDistanceRef.current,
         apertureRatio: settings.aperture.ratio,
         sourceCount: sourceTotal,
       }
@@ -226,10 +243,10 @@ function WaveCanvas({
       }
       context.restore()
 
-      // A continuous-aperture teaching model. The sinc envelope gives the
-      // single-slit spread, while a smooth transmission factor makes openings
-      // much narrower than one wavelength broad but faint. Drawn source points
-      // do not enter this calculation.
+      // A deliberately qualitative continuous-aperture model. A zero-free
+      // angular envelope shows only the core diffraction idea: smaller openings
+      // spread more, while openings much narrower than one wavelength transmit
+      // weakly. Drawn source points do not enter this calculation.
       if (settings.showResultant) {
         const fw = fieldCanvas.width
         const fh = fieldCanvas.height
@@ -249,6 +266,7 @@ function WaveCanvas({
             0.65 * apertureWidthUnits * apertureWidthUnits / wavelengthUnits,
           )
           const spreadSlope = Math.min(2.5, wavelengthUnits / Math.max(0.08, apertureWidthUnits))
+          const angularSpread = clamp(1.1 / Math.max(0.08, apertureToWavelength), 0.12, 1.4)
           const smoothStep = (value) => {
             const bounded = clamp(value, 0, 1)
             return bounded * bounded * (3 - 2 * bounded)
@@ -268,7 +286,7 @@ function WaveCanvas({
 
               const radialDistance = Math.hypot(longitudinalPosition, transversePosition)
               const sineTheta = transversePosition / radialDistance
-              const farFieldEnvelope = sinc(Math.PI * apertureToWavelength * sineTheta)
+              const farFieldEnvelope = Math.exp(-0.5 * Math.pow(sineTheta / angularSpread, 2))
               const nearFieldHalfWidth = apertureWidthUnits / 2 + longitudinalPosition * spreadSlope
               const nearFieldEnvelope = Math.exp(
                 -0.5 * Math.pow(Math.abs(transversePosition) / Math.max(0.08, nearFieldHalfWidth), 8),
@@ -453,7 +471,7 @@ function WaveCanvas({
   )
 }
 
-function ComparisonCard({ item, paused, playbackSpeed, onExplore }) {
+function ComparisonCard({ item, paused, playbackSpeed, stepSignal, onExplore }) {
   const sourceCount = Math.min(49, Math.max(13, Math.round(item.ratio * 7)))
 
   return (
@@ -478,6 +496,7 @@ function ComparisonCard({ item, paused, playbackSpeed, onExplore }) {
           showResultant
           paused={paused}
           playbackSpeed={playbackSpeed}
+          stepSignal={stepSignal}
         />
       </button>
     </article>
@@ -664,6 +683,7 @@ function HuygensExplorer({ onHome }) {
   const [showResultant, setShowResultant] = useState(true)
   const [paused, setPaused] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [animationStep, setAnimationStep] = useState(0)
   const [inspectionPoint, setInspectionPoint] = useState(null)
 
   const ratio = apertureWidth / wavelengthScale
@@ -692,8 +712,8 @@ function HuygensExplorer({ onHome }) {
           <h1>How a wave spreads after an aperture</h1>
         </div>
         <p className="intro-copy">
-          Every point across the open wavefront can be treated as a source of a secondary wavelet.
-          Their <em>superposition</em> determines the transmitted wave—not the number of dots we choose to draw.
+          A wave spreads after passing through an aperture. Narrower apertures produce greater diffraction,
+          while apertures much smaller than the wavelength transmit very little.
         </p>
       </section>
 
@@ -755,6 +775,18 @@ function HuygensExplorer({ onHome }) {
                   <IconPlay paused={paused} />
                   <span>{paused ? 'Play' : 'Pause'}</span>
                 </button>
+                {paused && (
+                  <button
+                    className="icon-button animation-nudge"
+                    type="button"
+                    onClick={() => setAnimationStep((current) => current + 1)}
+                    aria-label="Advance the wave animation by one small phase step"
+                    title="Advance one small phase step"
+                  >
+                    <IconNudge />
+                    <span>Nudge</span>
+                  </button>
+                )}
               </div>
             </div>
             <div className="comparison-grid">
@@ -764,6 +796,7 @@ function HuygensExplorer({ onHome }) {
                   item={item}
                   paused={paused}
                   playbackSpeed={playbackSpeed}
+                  stepSignal={animationStep}
                   onExplore={openInExplorer}
                 />
               ))}
@@ -810,6 +843,18 @@ function HuygensExplorer({ onHome }) {
                   <IconPlay paused={paused} />
                   <span>{paused ? 'Play' : 'Pause'}</span>
                 </button>
+                {paused && (
+                  <button
+                    className="icon-button animation-nudge"
+                    type="button"
+                    onClick={() => setAnimationStep((current) => current + 1)}
+                    aria-label="Advance the wave animation by one small phase step"
+                    title="Advance one small phase step"
+                  >
+                    <IconNudge />
+                    <span>Nudge</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -825,6 +870,7 @@ function HuygensExplorer({ onHome }) {
                   showResultant={showResultant}
                   paused={paused}
                   playbackSpeed={playbackSpeed}
+                  stepSignal={animationStep}
                   inspectionPoint={inspectionPoint}
                   onInspect={setInspectionPoint}
                 />
@@ -1014,7 +1060,13 @@ function laserColourForWavelength(wavelengthNm) {
 }
 
 function formatAngle(theta) {
-  return formatValue(theta * 180 / Math.PI) + "°"
+  return formatDegrees(theta * 180 / Math.PI)
+}
+
+function formatDegrees(value, showPositiveSign = false) {
+  const normalisedValue = Math.abs(value) < 0.05 ? 0 : value
+  const sign = showPositiveSign && normalisedValue > 0 ? "+" : ""
+  return sign + normalisedValue.toFixed(1) + "°"
 }
 
 function RangeControl({ id, label, value, min, max, step, unit, displayValue = null, onChange, disabled = false }) {
@@ -1035,15 +1087,95 @@ function RangeControl({ id, label, value, min, max, step, unit, displayValue = n
   )
 }
 
+function PhaseKnob({ id, label, value, onChange, colour }) {
+  const controlRef = useRef(null)
+  const inputRef = useRef(null)
+  const dragRef = useRef(null)
+
+  const beginAdjustment = (event) => {
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startValue: value,
+    }
+    inputRef.current?.focus()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  const continueAdjustment = (event) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const degreesPerPixel = 1.5
+    const unwrappedValue = drag.startValue + (event.clientY - drag.startY) * degreesPerPixel
+    onChange(clamp(Math.round(unwrappedValue / 5) * 5, -180, 180))
+  }
+
+  const finishAdjustment = (event) => {
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  return (
+    <label className="phase-knob" htmlFor={id}>
+      <span>{label}<strong>{Math.round(value)}°</strong></span>
+      <span
+        ref={controlRef}
+        className="phase-knob-control"
+        style={{ '--phase-colour': colour }}
+        title="Drag up to turn anticlockwise; drag down to turn clockwise"
+        onPointerDown={beginAdjustment}
+        onPointerMove={continueAdjustment}
+        onPointerUp={finishAdjustment}
+        onPointerCancel={finishAdjustment}
+      >
+        <input
+          ref={inputRef}
+          id={id}
+          className="phase-knob-input"
+          type="range"
+          min="-180"
+          max="180"
+          step="5"
+          value={value}
+          aria-valuetext={`${Math.round(value)} degrees`}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+        <span
+          className="phase-knob-face"
+          style={{ '--phase-angle': `${value}deg` }}
+          aria-hidden="true"
+        >
+          <i />
+        </span>
+        <button
+          type="button"
+          className="phase-knob-zero"
+          aria-label={`Set ${label} to zero degrees`}
+          title="Set phase to 0°"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault()
+            onChange(0)
+          }}
+        >
+          0
+        </button>
+      </span>
+    </label>
+  )
+}
+
 const DEFAULT_APPARATUS_YAW = 0.46
 const DEFAULT_APPARATUS_PITCH = 0.2
 
-function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, playbackSpeed }) {
+function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, playbackSpeed, stepSignal = 0, nudgePhaseDivisions = 120 }) {
   const canvasRef = useRef(null)
   const drawRef = useRef(null)
   const yawRef = useRef(DEFAULT_APPARATUS_YAW)
   const pitchRef = useRef(DEFAULT_APPARATUS_PITCH)
   const phaseRef = useRef(0)
+  const lastStepSignalRef = useRef(stepSignal)
   const dragRef = useRef(null)
   const screenHotspotsRef = useRef([])
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
@@ -1054,6 +1186,14 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
   const activeTheta = Math.asin(activeOrder * config.wavelength / config.spacing)
   const activeScreenPosition = config.screenDistance * Math.tan(activeTheta)
   const orderOnScreen = Math.abs(activeScreenPosition) <= config.screenHalfHeight
+
+  useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0) return
+    phaseRef.current = (phaseRef.current + stepCount / nudgePhaseDivisions) % 1
+    drawRef.current?.(performance.now(), false)
+  }, [stepSignal, nudgePhaseDivisions, paused])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -1095,7 +1235,6 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
       const sineYaw = Math.sin(yaw)
       const cosinePitch = Math.cos(pitch)
       const sinePitch = Math.sin(pitch)
-      const diagramMicroScale = 0.5
       const targetX = (config.screenDistance - 5.5) / 2
       const apparatusHalfWidth = Math.max(config.screenHalfHeight, 2.45)
       const scale = Math.min(
@@ -1296,44 +1435,6 @@ function GratingApparatus3D({ config, selectedOrder, onSelectOrder, paused, play
         ? config.screenDistance
         : Math.min(config.screenDistance, observationHalfWidth / Math.abs(Math.tan(activeTheta)))
       const selectedLength = selectedEndX / Math.max(0.01, direction[0])
-
-      if (activeOrder !== 0) {
-        const arcRadius = 2.15
-        const arcPoints = Array.from({ length: 25 }, (_, index) => {
-          const arcAngle = activeTheta * index / 24
-          return [arcRadius * Math.cos(arcAngle), arcRadius * Math.sin(arcAngle), 0]
-        })
-        strokeLine(arcPoints, '#ffd477', 1.35)
-        label(
-          [arcRadius * Math.cos(activeTheta / 2), arcRadius * Math.sin(activeTheta / 2), 0.35],
-          'θ = ' + formatAngle(activeTheta),
-          '#ffd477',
-          'center',
-          9,
-        )
-
-        const sign = Math.sign(activeTheta)
-        const lowerSource = [0.06, -sign * config.spacing * diagramMicroScale / 2, -0.35]
-        const upperSource = [0.06, sign * config.spacing * diagramMicroScale / 2, -0.35]
-        const pathDifference = config.spacing * diagramMicroScale * Math.abs(Math.sin(activeTheta))
-        const phaseFoot = [
-          lowerSource[0] + direction[0] * pathDifference,
-          lowerSource[1] + direction[1] * pathDifference,
-          lowerSource[2],
-        ]
-        strokeLine([lowerSource, [lowerSource[0] + direction[0] * Math.min(selectedLength, 5.2), lowerSource[1] + direction[1] * Math.min(selectedLength, 5.2), lowerSource[2]]], laserColourWithAlpha(0.78), 1.25)
-        strokeLine([upperSource, [upperSource[0] + direction[0] * Math.min(selectedLength, 5.2), upperSource[1] + direction[1] * Math.min(selectedLength, 5.2), upperSource[2]]], laserColourWithAlpha(0.78), 1.25)
-        strokeLine([lowerSource, upperSource], 'rgba(185, 222, 232, 0.42)', 1)
-        strokeLine([lowerSource, phaseFoot], '#ffad70', 2.2)
-        strokeLine([phaseFoot, upperSource], 'rgba(102, 221, 243, 0.8)', 1.25, [3, 3])
-        label(
-          [(lowerSource[0] + phaseFoot[0]) / 2, (lowerSource[1] + phaseFoot[1]) / 2, lowerSource[2] + 0.32],
-          'Δ = ' + Math.abs(activeOrder) + 'λ',
-          '#ffad70',
-          'center',
-          9,
-        )
-      }
 
       const wavefrontSpacing = displayedWavelength
       const movingOffset = phaseRef.current * wavefrontSpacing
@@ -1692,7 +1793,7 @@ function LegacyMultiSlitField({ config, selectedAngle, onSelect, paused, playbac
   )
 }
 
-function PathDifferenceField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, stepFrameCount = 4, showFringeGeometry = false, onToggleFringeGeometry }) {
+function PathDifferenceField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, nudgePhaseDivisions = 120, showFringeGeometry = false, onToggleFringeGeometry }) {
   const svgRef = useRef(null)
   const draggingRef = useRef(false)
   const readoutDragRef = useRef(null)
@@ -1745,7 +1846,7 @@ function PathDifferenceField({ config, selectedAngle, onSelect, paused, playback
     ? { className: 'constructive', label: 'CREST MEETS CREST · CONSTRUCTIVE' }
     : halfError <= 0.075
       ? { className: 'destructive', label: 'CREST MEETS TROUGH · DESTRUCTIVE' }
-      : { className: 'partial', label: `PARTIAL INTERFERENCE · ${Math.round((phaseCycles % 1) * 360)}° OFFSET` }
+      : { className: 'partial', label: `PARTIAL INTERFERENCE · ${formatDegrees((phaseCycles % 1) * 360)} OFFSET` }
 
   useEffect(() => {
     if (paused) return undefined
@@ -1771,9 +1872,8 @@ function PathDifferenceField({ config, selectedAngle, onSelect, paused, playback
     const stepCount = stepSignal - lastStepSignalRef.current
     lastStepSignalRef.current = stepSignal
     if (!paused || stepCount <= 0) return
-    const frameAdvance = (stepFrameCount / 30) * playbackSpeed * Math.PI * 1.45
-    setPhase((current) => (current + stepCount * frameAdvance) % (Math.PI * 2))
-  }, [stepSignal, stepFrameCount, paused, playbackSpeed])
+    setPhase((current) => (current + stepCount * Math.PI * 2 / nudgePhaseDivisions) % (Math.PI * 2))
+  }, [stepSignal, nudgePhaseDivisions, paused])
 
   const pointAlongPath = (path, physicalDistance, offset = 0) => {
     const fraction = clamp(physicalDistance / path.physicalLength, 0, 1)
@@ -2117,7 +2217,7 @@ function PathDifferenceField({ config, selectedAngle, onSelect, paused, playback
   )
 }
 
-function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, stepFrameCount = 4, viewMode, selectedOrder = 0, onSelectOrder, fieldZoom = 1, onFieldZoom, showFringeGeometry = false, onToggleFringeGeometry, showOrderGeometry = false, onToggleOrderGeometry }) {
+function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed, stepSignal = 0, nudgePhaseDivisions = 120, viewMode, selectedOrder = 0, onSelectOrder, fieldZoom = 1, onFieldZoom, showFringeGeometry = false, onToggleFringeGeometry, showOrderGeometry = false, onToggleOrderGeometry }) {
   const animationRef = useRef(null)
   const phaseRef = useRef(0)
   const lastStepSignalRef = useRef(stepSignal)
@@ -2212,11 +2312,13 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   useEffect(() => {
     const stepCount = stepSignal - lastStepSignalRef.current
     lastStepSignalRef.current = stepSignal
-    if (!paused || stepCount <= 0 || config.kind !== 'double-slit' || viewMode === 'intensity') return
-    const frameAdvanceInMilliseconds = stepFrameCount * (1000 / 30)
-    const periodAdvance = frameAdvanceInMilliseconds * 0.00055 * playbackSpeed / config.wavelength
-    phaseRef.current = (phaseRef.current + stepCount * periodAdvance) % 1
-  }, [stepSignal, stepFrameCount, paused, playbackSpeed, viewMode, config.kind, config.wavelength])
+    if (!paused || stepCount <= 0 || viewMode === 'intensity') return
+    const phaseAdvance = stepCount / nudgePhaseDivisions
+    phaseRef.current = (phaseRef.current + phaseAdvance) % 1
+    if (viewMode === 'principal-orders') {
+      principalTraceRef.current = (principalTraceRef.current + phaseAdvance) % 6
+    }
+  }, [stepSignal, nudgePhaseDivisions, paused, viewMode])
 
   useEffect(() => {
     const canvas = animationRef.current
@@ -3137,7 +3239,7 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
               <text className="order-geometry-title" x="13" y="19">PRINCIPAL ORDER · n = {orderGeometry.orderLabel}</text>
               {activeOrder === 0 ? (
                 <>
-                  <text x="13" y="43">θ = 0°, so Δ = d sin θ = 0</text>
+                  <text x="13" y="43">θ = 0.0°, so Δ = d sin θ = 0</text>
                   <text className="order-geometry-result" x="13" y="67">Every slit sends a crest straight ahead.</text>
                 </>
               ) : (
@@ -3411,11 +3513,11 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
 function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = null, expanded = false, angularScale = false, snapToPrincipalOrders = false, highlightOrder = null }) {
   const profileRef = useRef(null)
   const width = 720
-  const height = expanded ? 340 : 270
+  const height = expanded ? 420 : 370
   const left = 48
   const right = 700
-  const top = 20
-  const bottom = height - 44
+  const top = 66
+  const bottom = height - 90
   const doubleSlit = config.kind === 'double-slit'
   const halfRange = angularScale ? 90 : config.screenHalfHeight
   const sampleCount = 1201
@@ -3437,7 +3539,10 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         }))
         .filter((value) => value != null)
   const xValues = [...baseXValues, ...orderXValues]
-    .sort((first, second) => first - second)
+    // Lay the vertical observation plane across the graph as though it has
+    // been rotated clockwise: its upper edge is on the left and its lower
+    // edge is on the right.
+    .sort((first, second) => second - first)
     .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 1e-8)
   const thetaForX = (value) => angularScale ? value * Math.PI / 180 : Math.atan(value / config.screenDistance)
   const intensityValues = xValues.map((value) => interferenceIntensity(config, thetaForX(value)))
@@ -3448,7 +3553,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
     const amplitude = sinc(beta)
     return amplitude * amplitude
   })
-  const toX = (value) => left + ((value + halfRange) / (2 * halfRange)) * (right - left)
+  const toX = (value) => right - ((value + halfRange) / (2 * halfRange)) * (right - left)
   const toY = (value) => bottom - value * (bottom - top)
   const linePath = intensityValues.map((value, index) => (
     (index === 0 ? "M" : "L") + toX(xValues[index]).toFixed(2) + "," + toY(value).toFixed(2)
@@ -3518,7 +3623,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         const centre = toX(selectedOrderPoint.value)
         return {
           centre,
-          labelX: clamp(centre, left + 58, right - 58),
+          labelX: clamp(centre, left + 168, right - 168),
           start,
           width: Math.max(8, end - start),
         }
@@ -3541,7 +3646,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
       onSelect(Math.asin(sine))
       return
     }
-    const value = clamp(((svgX - left) / (right - left)) * halfRange * 2 - halfRange, -halfRange, halfRange)
+    const value = clamp(halfRange - ((svgX - left) / (right - left)) * halfRange * 2, -halfRange, halfRange)
     onSelect(thetaForX(value))
   }
 
@@ -3550,7 +3655,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
       <figcaption>
         <span>
           <strong>{angularScale ? "Far-field intensity" : "Screen intensity"}</strong>
-          <small>{angularScale ? "angular distribution · −90° to +90°" : `same ±${formatValue(halfRange)} ${doubleSlit ? 'unit' : 'cm'} screen scale`}</small>
+          <small>{angularScale ? "angular distribution · −90.0° to +90.0°" : `same ±${formatValue(halfRange)} ${doubleSlit ? 'unit' : 'cm'} screen scale`}</small>
         </span>
         <span>Intensity ∝ amplitude²</span>
       </figcaption>
@@ -3588,8 +3693,8 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         {angularScale && [-90, -45, 0, 45, 90].map((angle) => (
           <g className="profile-angle-marker" key={angle}>
             <line x1={toX(angle)} y1={bottom} x2={toX(angle)} y2={bottom + 5} />
-            <text className="profile-end-label" x={toX(angle)} y={height - 7} textAnchor={angle === -90 ? "start" : angle === 90 ? "end" : "middle"}>
-              {angle > 0 ? "+" : angle < 0 ? "−" : ""}{Math.abs(angle)}°
+            <text className="profile-end-label" x={toX(angle)} y={height - 9} textAnchor={angle === -90 ? "end" : angle === 90 ? "start" : "middle"}>
+              {formatDegrees(angle, true)}
             </text>
           </g>
         ))}
@@ -3610,7 +3715,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
           <g className={'order-marker' + (!doubleSlit && selectedOrderHighlight && order === selectedOrder ? ' active' : '')} key={order}>
             <line x1={toX(value)} y1={bottom} x2={toX(value)} y2={bottom - 10} />
             {(!doubleSlit || order === 0) && (
-              <text x={toX(value)} y={bottom + 17} textAnchor="middle">{order === 0 ? "0" : (order > 0 ? "+" : "−") + Math.abs(order)}</text>
+              <text x={toX(value)} y={bottom + 34} textAnchor="middle">{order === 0 ? "0" : (order > 0 ? "+" : "−") + Math.abs(order)}</text>
             )}
           </g>
         ))}
@@ -3623,7 +3728,7 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
             <circle cx={geometryPeakHighlight.centre} cy={geometryPeakHighlight.peakY} r="4.5" />
             <text
               x={geometryPeakHighlight.centre}
-              y={Math.max(top + 11, geometryPeakHighlight.peakY - 11)}
+              y={Math.max(top + 26, geometryPeakHighlight.peakY - 18)}
               textAnchor="middle"
             >
               +1 · FIRST MAXIMUM
@@ -3637,9 +3742,9 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
               d={linePath}
               clipPath={"url(#selected-order-clip-" + config.kind + ")"}
             />
-            <g className="selected-order-badge" transform={"translate(" + selectedOrderHighlight.labelX + " 1)"}>
-              <rect x="-55" y="0" width="110" height="18" rx="3" />
-              <text x="0" y="12.5" textAnchor="middle">
+            <g className="selected-order-badge" transform={"translate(" + selectedOrderHighlight.labelX + " 2)"}>
+              <rect x="-165" y="0" width="330" height="54" rx="7" />
+              <text x="0" y="37.5" textAnchor="middle">
                 SELECTED · n = {selectedOrderPoint.order > 0 ? "+" : selectedOrderPoint.order < 0 ? "−" : ""}{Math.abs(selectedOrderPoint.order)}
               </text>
             </g>
@@ -3653,8 +3758,8 @@ function InterferenceProfile({ config, selectedAngle, onSelect, selectedOrder = 
         )}
         {!angularScale && (
           <>
-            <text className="profile-end-label" x={left} y={height - 7} textAnchor="start">−{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
-            <text className="profile-end-label" x={right} y={height - 7} textAnchor="end">+{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+            <text className="profile-end-label" x={left} y={height - 9} textAnchor="start">+{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
+            <text className="profile-end-label" x={right} y={height - 9} textAnchor="end">−{formatValue(halfRange)} {doubleSlit ? 'units' : 'cm'}</text>
           </>
         )}
       </svg>
@@ -3818,7 +3923,7 @@ function MultiSourceInspector({ config, selectedAngle, onClose, paused, playback
         <div className="inspector-status">
           <span className={"interference-state " + plot.interference.className}>{plot.interference.label}</span>
           <span>{config.kind === 'double-slit' ? 'Path difference' : 'Adjacent path difference'} {formatValue(adjacentPathDifference)} units</span>
-          <span>Adjacent phase difference {formatValue(phaseDegrees)}°</span>
+          <span>Adjacent phase difference {formatDegrees(phaseDegrees)}</span>
           <span>Source alignment {Math.round(plot.coherence * 100)}%</span>
           <span>Combined amplitude {Math.round(plot.combinedAmplitude * 100)}% of the central peak</span>
         </div>
@@ -3885,21 +3990,20 @@ function InterferenceInvestigation({ kind, onHome }) {
     : selectedAngle
   const usesAngularFarField = !doubleSlit && fieldView !== 'apparatus-3d'
   const fringeSpacing = config.wavelength * screenDistance / config.spacing
-  const nudgeFrameCount = wavelength <= 1 ? 2 : 4
   const maximumOrder = Math.floor(config.spacing / config.wavelength)
   const positiveOrders = Array.from({ length: maximumOrder }, (_, index) => index + 1)
   const title = doubleSlit ? "Double-slit interference" : "Diffraction grating"
   const summary = doubleSlit
-    ? "Follow two coherent waves from their real slit positions to the screen. Every displayed length now uses the same relative scale."
-    : "Extend the same scaled geometry to many equally spaced coherent slits. Reinforcement survives only at particular angles, producing sharp principal maxima."
+    ? "Two coherent waves spread from the slits and overlap. Their changing path difference produces alternating regions of constructive and destructive interference."
+    : "A diffraction grating sends light into discrete directions. At each principal maximum, waves from every slit arrive in phase; between the maxima, they mostly cancel."
 
   useEffect(() => {
     if (!doubleSlit) setSelectedOrder((current) => clamp(current, -maximumOrder, maximumOrder))
   }, [doubleSlit, maximumOrder])
 
   useEffect(() => {
-    if (!doubleSlit && fieldView === 'apparatus-3d' && wavelength > 1.2) {
-      setWavelength(1.2)
+    if (!doubleSlit && fieldView === 'apparatus-3d' && wavelength > 0.9) {
+      setWavelength(0.9)
       setSelectedAngle(null)
     }
   }, [doubleSlit, fieldView, wavelength])
@@ -3995,7 +4099,7 @@ function InterferenceInvestigation({ kind, onHome }) {
             label="Wavelength, λ"
             value={wavelength}
             min={doubleSlit ? 0.5 : 0.38}
-            max={doubleSlit ? 4.5 : fieldView === 'apparatus-3d' ? 1.2 : 2.5}
+            max={doubleSlit ? 4.5 : fieldView === 'apparatus-3d' ? 0.9 : 2.5}
             step={!doubleSlit && fieldView === 'apparatus-3d' ? "0.01" : "0.05"}
             displayValue={doubleSlit ? null : Math.round(wavelength * 1000)}
             unit={doubleSlit ? " units" : " nm"}
@@ -4030,13 +4134,13 @@ function InterferenceInvestigation({ kind, onHome }) {
               <IconPlay paused={paused || fieldView === 'intensity'} />
               <span>{fieldView === 'intensity' ? "Static" : paused ? "Play" : "Pause"}</span>
             </button>
-            {paused && doubleSlit && fieldView !== 'intensity' && (
+            {paused && fieldView !== 'intensity' && (
               <button
                 className="icon-button animation-nudge"
                 type="button"
                 onClick={() => setAnimationStep((current) => current + 1)}
-                aria-label={`Advance the wave animation by ${nudgeFrameCount} frames`}
-                title={`Advance ${nudgeFrameCount} frames`}
+                aria-label="Advance the wave animation by one small phase step"
+                title="Advance one small phase step"
               >
                 <IconNudge />
                 <span>Nudge</span>
@@ -4078,6 +4182,7 @@ function InterferenceInvestigation({ kind, onHome }) {
               onSelectOrder={selectPrincipalOrder}
               paused={paused}
               playbackSpeed={playbackSpeed}
+              stepSignal={animationStep}
             />
           ) : doubleSlit && fieldView === 'path-difference' ? (
             <PathDifferenceField
@@ -4087,7 +4192,6 @@ function InterferenceInvestigation({ kind, onHome }) {
               paused={paused}
               playbackSpeed={playbackSpeed}
               stepSignal={animationStep}
-              stepFrameCount={nudgeFrameCount}
               showFringeGeometry={showFringeGeometry}
               onToggleFringeGeometry={() => setShowFringeGeometry((current) => !current)}
             />
@@ -4099,7 +4203,6 @@ function InterferenceInvestigation({ kind, onHome }) {
               paused={paused}
               playbackSpeed={playbackSpeed}
               stepSignal={animationStep}
-              stepFrameCount={nudgeFrameCount}
               viewMode={fieldView}
               selectedOrder={selectedOrder}
               onSelectOrder={selectPrincipalOrder}
@@ -4133,7 +4236,7 @@ function InterferenceInvestigation({ kind, onHome }) {
                   <div className="equation">w ≈ <span className="textbook-lambda">λ</span>D / s</div>
                   <dl>
                     <div><dt>Fringe spacing</dt><dd>{formatValue(fringeSpacing)} units</dd></div>
-                    <div><dt>Central maximum</dt><dd>θ = 0°</dd></div>
+                    <div><dt>Central maximum</dt><dd>θ = 0.0°</dd></div>
                     <div><dt>Slit envelope</dt><dd>set by a/λ</dd></div>
                   </dl>
                   <p className="effect-copy">Increase λ or D to spread the fringes out; increase s to bring them closer together. Increasing a narrows the diffraction envelope.</p>
@@ -4201,6 +4304,1635 @@ function InterferenceInvestigation({ kind, onHome }) {
   )
 }
 
+const STANDING_WAVE_SPEED = 3
+const STANDING_WAVE_DOMAIN = 18
+const STANDING_BEAM_HALF_FRACTION = 0.16
+const STANDING_SOURCE_OSCILLATION = 7.15
+
+function createWaveEmissionHistory(source, frequency, amplitude, phaseOffset) {
+  return [{
+    startTime: 0,
+    startCycles: 0,
+    frequency,
+    amplitude,
+    phaseOffset,
+    source: { ...source },
+  }]
+}
+
+function waveEmissionAt(history, time) {
+  let segment = history[0]
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (time >= history[index].startTime) {
+      segment = history[index]
+      break
+    }
+  }
+  return {
+    ...segment,
+    source: segment.source,
+    cycles: segment.startCycles + (time - segment.startTime) * segment.frequency,
+  }
+}
+
+function recordWaveEmission(history, time, nextState) {
+  const previous = history.at(-1)
+  const unchanged = (
+    Math.abs(previous.frequency - nextState.frequency) < 1e-9
+    && Math.abs(previous.amplitude - nextState.amplitude) < 1e-9
+    && Math.abs(previous.phaseOffset - nextState.phaseOffset) < 1e-9
+    && Math.abs(previous.source.x - nextState.source.x) < 1e-7
+    && Math.abs(previous.source.y - nextState.source.y) < 1e-7
+  )
+  if (unchanged) return
+
+  const startCycles = waveEmissionAt(history, time).cycles
+  const nextSegment = {
+    startTime: time,
+    startCycles,
+    frequency: nextState.frequency,
+    amplitude: nextState.amplitude,
+    phaseOffset: nextState.phaseOffset,
+    source: { ...nextState.source },
+  }
+  if (Math.abs(previous.startTime - time) < 1e-9) history[history.length - 1] = nextSegment
+  else history.push(nextSegment)
+
+  const oldestUsefulTime = time - STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED - 2
+  while (history.length > 2 && history[1].startTime < oldestUsefulTime) history.shift()
+}
+
+function travellingWaveSampleAt(history, time, xWorld, direction) {
+  let emissionTime = time
+  let emission = waveEmissionAt(history, emissionTime)
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const sourceWorldX = emission.source.x * STANDING_WAVE_DOMAIN
+    const travelDistance = direction * (xWorld - sourceWorldX)
+    if (travelDistance < -1e-5) return null
+    const nextEmissionTime = time - travelDistance / STANDING_WAVE_SPEED
+    if (Math.abs(nextEmissionTime - emissionTime) < 1e-6) break
+    emissionTime = nextEmissionTime
+    emission = waveEmissionAt(history, emissionTime)
+  }
+
+  const sourceWorldX = emission.source.x * STANDING_WAVE_DOMAIN
+  if (direction * (xWorld - sourceWorldX) < -1e-4) return null
+  return {
+    ...emission,
+    emissionTime,
+    phase: -2 * Math.PI * emission.cycles + emission.phaseOffset * Math.PI / 180,
+  }
+}
+
+function timelineStateAt(history, time) {
+  let entry = history[0]
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (time >= history[index].startTime) {
+      entry = history[index]
+      break
+    }
+  }
+  return entry.value
+}
+
+function recordTimelineState(history, time, value) {
+  const previous = history.at(-1)
+  if (
+    Math.abs(previous.value.x - value.x) < 1e-7
+    && Math.abs(previous.value.y - value.y) < 1e-7
+  ) return
+  const nextEntry = { startTime: time, value: { ...value } }
+  if (Math.abs(previous.startTime - time) < 1e-9) history[history.length - 1] = nextEntry
+  else history.push(nextEntry)
+
+  const oldestUsefulTime = time - STANDING_WAVE_DOMAIN * 2 / STANDING_WAVE_SPEED - 2
+  while (history.length > 2 && history[1].startTime < oldestUsefulTime) history.shift()
+}
+
+function StandingWaveCanvas({
+  leftSource,
+  rightSource,
+  onLeftSourceChange,
+  onRightSourceChange,
+  leftFrequency,
+  rightFrequency,
+  leftAmplitude,
+  rightAmplitude,
+  leftPhaseOffset,
+  rightPhaseOffset,
+  paused,
+  playbackSpeed,
+  stepSignal = 0,
+  nudgePhaseDivisions = 120,
+}) {
+  const canvasRef = useRef(null)
+  const drawRef = useRef(null)
+  const timeRef = useRef(0)
+  const dragRef = useRef(null)
+  const lastStepSignalRef = useRef(stepSignal)
+  const emissionHistoryRef = useRef({
+    left: createWaveEmissionHistory(leftSource, leftFrequency, leftAmplitude, leftPhaseOffset),
+    right: createWaveEmissionHistory(rightSource, rightFrequency, rightAmplitude, rightPhaseOffset),
+  })
+  const settingsRef = useRef({
+    leftSource,
+    rightSource,
+    leftFrequency,
+    rightFrequency,
+    leftAmplitude,
+    rightAmplitude,
+    leftPhaseOffset,
+    rightPhaseOffset,
+    paused,
+    playbackSpeed,
+  })
+
+  useEffect(() => {
+    recordWaveEmission(emissionHistoryRef.current.left, timeRef.current, {
+      source: leftSource,
+      frequency: leftFrequency,
+      amplitude: leftAmplitude,
+      phaseOffset: leftPhaseOffset,
+    })
+    recordWaveEmission(emissionHistoryRef.current.right, timeRef.current, {
+      source: rightSource,
+      frequency: rightFrequency,
+      amplitude: rightAmplitude,
+      phaseOffset: rightPhaseOffset,
+    })
+    settingsRef.current = {
+      leftSource,
+      rightSource,
+      leftFrequency,
+      rightFrequency,
+      leftAmplitude,
+      rightAmplitude,
+      leftPhaseOffset,
+      rightPhaseOffset,
+      paused,
+      playbackSpeed,
+    }
+    drawRef.current?.(performance.now(), false)
+  }, [leftSource, rightSource, leftFrequency, rightFrequency, leftAmplitude, rightAmplitude, leftPhaseOffset, rightPhaseOffset, paused, playbackSpeed])
+
+  useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0) return
+    const fastestFrequency = Math.max(
+      settingsRef.current.leftFrequency,
+      settingsRef.current.rightFrequency,
+      0.01,
+    )
+    timeRef.current += stepCount / (nudgePhaseDivisions * fastestFrequency)
+    drawRef.current?.(performance.now(), false)
+  }, [stepSignal, nudgePhaseDivisions, paused])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
+    const context = canvas.getContext('2d')
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let frameId
+    let previous = performance.now()
+
+    const draw = (now = performance.now(), advanceTime = true) => {
+      const rect = canvas.getBoundingClientRect()
+      const width = Math.max(300, rect.width)
+      const height = Math.max(440, rect.height)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const pixelWidth = Math.round(width * dpr)
+      const pixelHeight = Math.round(height * dpr)
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth
+        canvas.height = pixelHeight
+      }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      const settings = settingsRef.current
+      if (advanceTime && !settings.paused && !reducedMotion) {
+        const elapsed = Math.min(50, now - previous) / 1000
+        timeRef.current += elapsed * settings.playbackSpeed
+      }
+      previous = now
+
+      const left = 62
+      const right = width - 62
+      const fieldTop = 58
+      const fieldBottom = height * 0.61
+      const fieldHeight = fieldBottom - fieldTop
+      const beamHalfHeight = fieldHeight * STANDING_BEAM_HALF_FRACTION
+      const graphTop = fieldBottom + 76
+      const graphBottom = height - 38
+      const graphMiddle = (graphTop + graphBottom) / 2
+      const graphScale = Math.max(14, Math.min(25, (graphBottom - graphTop - 18) / 6))
+      const usableWidth = right - left
+      const toX = (normalisedX) => left + normalisedX * usableWidth
+      const toY = (normalisedY) => fieldTop + normalisedY * fieldHeight
+      const worldX = (screenX) => ((screenX - left) / usableWidth) * STANDING_WAVE_DOMAIN
+      const screenX = (x) => left + (x / STANDING_WAVE_DOMAIN) * usableWidth
+      const sourceAX = toX(settings.leftSource.x)
+      const sourceAY = toY(settings.leftSource.y)
+      const sourceBX = toX(settings.rightSource.x)
+      const sourceBY = toY(settings.rightSource.y)
+      const sourceAWorldX = worldX(sourceAX)
+      const sourceBWorldX = worldX(sourceBX)
+      const wavelengthA = STANDING_WAVE_SPEED / settings.leftFrequency
+      const wavelengthB = STANDING_WAVE_SPEED / settings.rightFrequency
+      const time = timeRef.current
+      const phaseOffsetA = settings.leftPhaseOffset * Math.PI / 180
+      const phaseOffsetB = settings.rightPhaseOffset * Math.PI / 180
+      const phaseOffsetCyclesA = settings.leftPhaseOffset / 360
+      const phaseOffsetCyclesB = settings.rightPhaseOffset / 360
+      const leftEmissionHistory = emissionHistoryRef.current.left
+      const rightEmissionHistory = emissionHistoryRef.current.right
+      const waveSampleAAt = (xWorld) => travellingWaveSampleAt(leftEmissionHistory, time, xWorld, 1)
+      const waveSampleBAt = (xWorld) => travellingWaveSampleAt(rightEmissionHistory, time, xWorld, -1)
+      const coherent = Math.abs(settings.leftFrequency - settings.rightFrequency) < 1e-6
+      const latestLeftEmission = leftEmissionHistory.at(-1)
+      const latestRightEmission = rightEmissionHistory.at(-1)
+      const leftChangeInField = leftEmissionHistory.length > 1
+        && time - latestLeftEmission.startTime < STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED
+      const rightChangeInField = rightEmissionHistory.length > 1
+        && time - latestRightEmission.startTime < STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED
+      const stableCoherentField = coherent && !leftChangeInField && !rightChangeInField
+      const balanced = Math.abs(settings.leftAmplitude - settings.rightAmplitude) < 0.025
+      const overlapTop = Math.max(sourceAY - beamHalfHeight, sourceBY - beamHalfHeight)
+      const overlapBottom = Math.min(sourceAY + beamHalfHeight, sourceBY + beamHalfHeight)
+      const hasOverlap = sourceAX < sourceBX && overlapBottom > overlapTop
+
+      const background = context.createLinearGradient(0, 0, width, height)
+      background.addColorStop(0, '#06131e')
+      background.addColorStop(0.52, '#0a2432')
+      background.addColorStop(1, '#07131f')
+      context.fillStyle = background
+      context.fillRect(0, 0, width, height)
+
+      const resultantPanelTop = fieldBottom + 17
+      const resultantPanelBottom = height - 27
+      context.save()
+      context.fillStyle = 'rgba(2, 13, 21, 0.38)'
+      context.strokeStyle = 'rgba(151, 199, 215, 0.16)'
+      context.lineWidth = 1
+      context.beginPath()
+      context.roundRect(
+        left - 18,
+        resultantPanelTop,
+        usableWidth + 36,
+        resultantPanelBottom - resultantPanelTop,
+        8,
+      )
+      context.fill()
+      context.stroke()
+      context.restore()
+
+      const drawCausalBeam = (sampleAt, colourStops) => {
+        for (let x = left; x <= right; x += 3) {
+          const sample = sampleAt(worldX(x))
+          if (!sample) continue
+          const centreY = toY(sample.source.y)
+          const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
+          gradient.addColorStop(0, colourStops[0])
+          gradient.addColorStop(0.22, colourStops[1])
+          gradient.addColorStop(0.5, colourStops[2])
+          gradient.addColorStop(0.78, colourStops[1])
+          gradient.addColorStop(1, colourStops[0])
+          context.save()
+          context.globalAlpha = 0.25 + 0.75 * clamp(sample.amplitude / 1.5, 0, 1)
+          context.fillStyle = gradient
+          context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+          context.restore()
+        }
+      }
+
+      drawCausalBeam(waveSampleAAt, ['rgba(102,221,243,0)', 'rgba(102,221,243,0.035)', 'rgba(102,221,243,0.085)'])
+      drawCausalBeam(waveSampleBAt, ['rgba(255,150,122,0)', 'rgba(255,150,122,0.03)', 'rgba(255,150,122,0.075)'])
+
+      const drawPhaseWash = (sampleAt, crestColour, troughColour) => {
+        context.save()
+        context.globalCompositeOperation = 'screen'
+        for (let x = left; x <= right; x += 3) {
+          const sample = sampleAt(worldX(x))
+          if (!sample || sample.amplitude <= 0.01) continue
+          const centreY = toY(sample.source.y)
+          const displacement = Math.sin(sample.phase)
+          const amplitudeScale = clamp(sample.amplitude / 1.5, 0, 1)
+          const strength = Math.abs(displacement) ** 1.65 * amplitudeScale
+          const colour = displacement >= 0 ? crestColour : troughColour
+          context.fillStyle = `rgba(${colour},${strength * 0.13})`
+          context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+        }
+        context.restore()
+      }
+
+      drawPhaseWash(
+        waveSampleAAt,
+        '72, 224, 247',
+        '91, 112, 255',
+      )
+      drawPhaseWash(
+        waveSampleBAt,
+        '255, 149, 119',
+        '220, 80, 160',
+      )
+
+      let causalOverlapExists = false
+      for (let x = left; x <= right; x += 4) {
+        const xWorld = worldX(x)
+        const sampleA = waveSampleAAt(xWorld)
+        const sampleB = waveSampleBAt(xWorld)
+        if (!sampleA || !sampleB) continue
+        const centreA = toY(sampleA.source.y)
+        const centreB = toY(sampleB.source.y)
+        const causalOverlapTop = Math.max(centreA - beamHalfHeight, centreB - beamHalfHeight)
+        const causalOverlapBottom = Math.min(centreA + beamHalfHeight, centreB + beamHalfHeight)
+        if (causalOverlapBottom <= causalOverlapTop) continue
+        causalOverlapExists = true
+        const resultant = sampleA.amplitude * Math.sin(sampleA.phase) + sampleB.amplitude * Math.sin(sampleB.phase)
+        const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, sampleA.amplitude + sampleB.amplitude))
+        const overlapGradient = context.createLinearGradient(0, causalOverlapTop, 0, causalOverlapBottom)
+        overlapGradient.addColorStop(0, 'rgba(255,212,122,0)')
+        overlapGradient.addColorStop(0.5, resultant >= 0
+          ? `rgba(255,212,122,${0.025 + strength * 0.16})`
+          : `rgba(183,176,255,${0.018 + strength * 0.12})`)
+        overlapGradient.addColorStop(1, 'rgba(255,212,122,0)')
+        context.fillStyle = overlapGradient
+        context.fillRect(x, causalOverlapTop, 4.5, causalOverlapBottom - causalOverlapTop)
+      }
+
+      if (hasOverlap) {
+        context.save()
+        context.strokeStyle = 'rgba(255, 212, 122, 0.24)'
+        context.lineWidth = 1
+        context.setLineDash([7, 6])
+        context.strokeRect(sourceAX, overlapTop, sourceBX - sourceAX, overlapBottom - overlapTop)
+        context.restore()
+      }
+
+      const drawFront = (front, colour, dashed = false) => {
+        const { x, sample } = front
+        const centreY = toY(sample.source.y)
+        context.save()
+        context.strokeStyle = colour
+        context.globalAlpha = 0.34 + 0.42 * (sample.amplitude / 1.5)
+        context.lineWidth = dashed ? 1 : 1.65
+        context.setLineDash(dashed ? [5, 5] : [])
+        context.beginPath()
+        context.moveTo(x, centreY - beamHalfHeight * 0.88)
+        context.lineTo(x, centreY + beamHalfHeight * 0.88)
+        context.stroke()
+        context.restore()
+      }
+
+      const findFrontPositions = (sampleAt, phaseTarget) => {
+        const positions = []
+        let previousX = left
+        let previousSample = sampleAt(worldX(previousX))
+        for (let x = left + 2; x <= right + 1; x += 2) {
+          const boundedX = Math.min(x, right)
+          const sample = sampleAt(worldX(boundedX))
+          if (sample && previousSample) {
+            const previousValue = previousSample.phase / (Math.PI * 2) - phaseTarget
+            const value = sample.phase / (Math.PI * 2) - phaseTarget
+            const firstInteger = Math.ceil(Math.min(previousValue, value) - 1e-8)
+            const lastInteger = Math.floor(Math.max(previousValue, value) + 1e-8)
+            for (let integer = firstInteger; integer <= lastInteger; integer += 1) {
+              const denominator = value - previousValue
+              if (Math.abs(denominator) < 1e-9) continue
+              const fraction = (integer - previousValue) / denominator
+              if (fraction <= 1e-6 || fraction > 1 + 1e-6) continue
+              const frontX = previousX + (boundedX - previousX) * fraction
+              const frontSample = sampleAt(worldX(frontX)) ?? sample
+              positions.push({ x: frontX, sample: frontSample })
+            }
+          }
+          previousX = boundedX
+          previousSample = sample
+          if (boundedX === right) break
+        }
+        return positions
+      }
+
+      const crestPositionsA = findFrontPositions(waveSampleAAt, 0.25)
+      const troughPositionsA = findFrontPositions(waveSampleAAt, 0.75)
+      const crestPositionsB = findFrontPositions(waveSampleBAt, 0.25)
+      const troughPositionsB = findFrontPositions(waveSampleBAt, 0.75)
+      crestPositionsA.forEach((front) => drawFront(front, '#78e7fa'))
+      troughPositionsA.forEach((front) => drawFront(front, '#78e7fa', true))
+      crestPositionsB.forEach((front) => drawFront(front, '#ff9b80'))
+      troughPositionsB.forEach((front) => drawFront(front, '#ff9b80', true))
+
+      const drawDirection = (x, y, direction, colour, text) => {
+        const arrowLength = 54 * direction
+        context.save()
+        context.strokeStyle = colour
+        context.fillStyle = colour
+        context.lineWidth = 2
+        context.beginPath()
+        context.moveTo(x, y)
+        context.lineTo(x + arrowLength, y)
+        context.stroke()
+        context.beginPath()
+        context.moveTo(x + arrowLength, y)
+        context.lineTo(x + arrowLength - 9 * direction, y - 6)
+        context.lineTo(x + arrowLength - 9 * direction, y + 6)
+        context.closePath()
+        context.fill()
+        context.font = '700 11px DM Sans, sans-serif'
+        context.textAlign = direction > 0 ? 'left' : 'right'
+        context.fillText(text, x + arrowLength + 9 * direction, y + 4)
+        context.restore()
+      }
+
+      drawDirection(sourceAX + 18, sourceAY - beamHalfHeight - 17, 1, '#78e7fa', 'WAVE A')
+      drawDirection(sourceBX - 18, sourceBY + beamHalfHeight + 17, -1, '#ff9b80', 'WAVE B')
+
+      const drawSource = (x, y, colour, name, align) => {
+        context.save()
+        context.shadowColor = colour
+        context.shadowBlur = 13
+        context.fillStyle = colour
+        context.beginPath()
+        context.roundRect(x - 7, y - 53, 14, 106, 6)
+        context.fill()
+        context.shadowBlur = 0
+        context.fillStyle = '#07131f'
+        context.beginPath()
+        context.arc(x, y, 5, 0, Math.PI * 2)
+        context.fill()
+        context.strokeStyle = colour
+        context.lineWidth = 2
+        context.beginPath()
+        context.arc(x, y, 11, 0, Math.PI * 2)
+        context.stroke()
+        context.fillStyle = colour
+        context.font = '700 12px DM Sans, sans-serif'
+        context.textAlign = align
+        context.fillText(name, x + (align === 'left' ? 16 : -16), y - 63)
+        context.font = '500 9px DM Sans, sans-serif'
+        context.fillStyle = 'rgba(220, 240, 246, 0.68)'
+        context.fillText('DRAG', x + (align === 'left' ? 16 : -16), y - 48)
+        context.restore()
+      }
+
+      const sourceAMotion = Math.sin(-2 * Math.PI * waveEmissionAt(leftEmissionHistory, time).cycles + phaseOffsetA)
+        * STANDING_SOURCE_OSCILLATION * clamp(settings.leftAmplitude / 1.5, 0, 1)
+      const sourceBMotion = -Math.sin(-2 * Math.PI * waveEmissionAt(rightEmissionHistory, time).cycles + phaseOffsetB)
+        * STANDING_SOURCE_OSCILLATION * clamp(settings.rightAmplitude / 1.5, 0, 1)
+      drawSource(sourceAX + sourceAMotion, sourceAY, '#78e7fa', 'SOURCE A', 'left')
+      drawSource(sourceBX + sourceBMotion, sourceBY, '#ff9b80', 'SOURCE B', 'right')
+
+      context.save()
+      context.strokeStyle = 'rgba(151, 199, 215, 0.2)'
+      context.lineWidth = 1
+      context.beginPath()
+      context.moveTo(left, graphMiddle)
+      context.lineTo(right, graphMiddle)
+      context.stroke()
+      context.fillStyle = '#91aab4'
+      context.font = '700 11px DM Sans, sans-serif'
+      context.textAlign = 'left'
+      context.fillText('RESULTANT DISPLACEMENT IN THE OVERLAP', left, fieldBottom + 40)
+      context.restore()
+
+      if (!causalOverlapExists) {
+        context.save()
+        context.fillStyle = '#ffd47a'
+        context.font = '600 13px DM Sans, sans-serif'
+        context.textAlign = 'center'
+        context.fillText('Drag the sources until the two beams overlap.', (left + right) / 2, graphMiddle + 4)
+        context.restore()
+      } else {
+        const sampleCount = Math.max(240, Math.round(sourceBX - sourceAX))
+        const drawSpatialWave = (which, colour, lineWidth, opacity = 1) => {
+          context.save()
+          context.strokeStyle = colour
+          context.globalAlpha = opacity
+          context.lineWidth = lineWidth
+          context.lineJoin = 'round'
+          context.beginPath()
+          let drawing = false
+          for (let index = 0; index <= sampleCount; index += 1) {
+            const x = sourceAX + (index / sampleCount) * (sourceBX - sourceAX)
+            const xWorld = worldX(x)
+            const sampleA = waveSampleAAt(xWorld)
+            const sampleB = waveSampleBAt(xWorld)
+            if (!sampleA || !sampleB) {
+              drawing = false
+              continue
+            }
+            const centreA = toY(sampleA.source.y)
+            const centreB = toY(sampleB.source.y)
+            if (Math.abs(centreA - centreB) >= beamHalfHeight * 2) {
+              drawing = false
+              continue
+            }
+            const waveA = sampleA.amplitude * Math.sin(sampleA.phase)
+            const waveB = sampleB.amplitude * Math.sin(sampleB.phase)
+            const value = which === 'a' ? waveA : which === 'b' ? waveB : waveA + waveB
+            const y = graphMiddle - value * graphScale
+            if (!drawing) context.moveTo(x, y)
+            else context.lineTo(x, y)
+            drawing = true
+          }
+          context.stroke()
+          context.restore()
+        }
+
+        if (coherent) {
+          const drawEnvelope = (direction) => {
+            context.save()
+            context.strokeStyle = 'rgba(255, 212, 122, 0.42)'
+            context.lineWidth = 1.2
+            context.setLineDash([5, 5])
+            context.beginPath()
+            for (let index = 0; index <= sampleCount; index += 1) {
+              const x = sourceAX + (index / sampleCount) * (sourceBX - sourceAX)
+              const xWorld = worldX(x)
+              const sampleA = waveSampleAAt(xWorld)
+              const sampleB = waveSampleBAt(xWorld)
+              if (!sampleA || !sampleB) continue
+              const phaseA = sampleA.phase
+              const phaseB = sampleB.phase
+              const envelope = Math.sqrt(
+                sampleA.amplitude ** 2
+                + sampleB.amplitude ** 2
+                + 2 * sampleA.amplitude * sampleB.amplitude * Math.cos(phaseA - phaseB),
+              )
+              const y = graphMiddle - direction * envelope * graphScale
+              if (index === 0) context.moveTo(x, y)
+              else context.lineTo(x, y)
+            }
+            context.stroke()
+            context.restore()
+          }
+          drawEnvelope(1)
+          drawEnvelope(-1)
+
+          if (balanced && stableCoherentField && settings.leftAmplitude > 0.04) {
+            const midpoint = (sourceAWorldX + sourceBWorldX) / 2
+            const phaseShift = (phaseOffsetCyclesA - phaseOffsetCyclesB) * wavelengthA / 2
+            for (let index = -40; index <= 40; index += 1) {
+              const nodeWorldX = midpoint + (index + 0.5) * wavelengthA / 2 - phaseShift
+              if (nodeWorldX <= sourceAWorldX || nodeWorldX >= sourceBWorldX) continue
+              const nodeX = screenX(nodeWorldX)
+              context.save()
+              context.strokeStyle = 'rgba(232, 244, 247, 0.22)'
+              context.lineWidth = 1
+              context.setLineDash([3, 5])
+              context.beginPath()
+              context.moveTo(nodeX, graphTop)
+              context.lineTo(nodeX, graphBottom)
+              context.stroke()
+              context.fillStyle = '#dceaf0'
+              context.beginPath()
+              context.arc(nodeX, graphMiddle, 2.4, 0, Math.PI * 2)
+              context.fill()
+              context.restore()
+            }
+          }
+        }
+
+        drawSpatialWave('a', '#78e7fa', 1.15, 0.5)
+        drawSpatialWave('b', '#ff9b80', 1.15, 0.46)
+        drawSpatialWave('sum', '#ffd47a', 3.2, 1)
+
+        const drawCrestArrows = (direction, positions, colour) => {
+          context.save()
+          context.strokeStyle = colour
+          context.fillStyle = colour
+          context.globalAlpha = 0.42
+          context.lineWidth = 1.1
+          let visibleIndex = 0
+          positions.forEach((front) => {
+            const { x, sample } = front
+            if (sample.amplitude <= 0.04) return
+            if (x < sourceAX + 10 || x > sourceBX - 10) return
+            visibleIndex += 1
+            if (visibleIndex % 2 === 0) return
+            const y = graphMiddle - sample.amplitude * graphScale - 7
+            const tipX = x + direction * 7
+            const tailX = x - direction * 7
+            context.beginPath()
+            context.moveTo(tailX, y)
+            context.lineTo(tipX, y)
+            context.stroke()
+            context.beginPath()
+            context.moveTo(tipX, y)
+            context.lineTo(tipX - direction * 4, y - 3)
+            context.lineTo(tipX - direction * 4, y + 3)
+            context.closePath()
+            context.fill()
+          })
+          context.restore()
+        }
+
+        drawCrestArrows(1, crestPositionsA, '#78e7fa')
+        drawCrestArrows(-1, crestPositionsB, '#ff9b80')
+      }
+
+      context.save()
+      context.font = '500 10px DM Sans, sans-serif'
+      context.textAlign = 'left'
+      context.fillStyle = '#78e7fa'
+      context.fillText('A →', left, height - 12)
+      context.fillStyle = '#ff9b80'
+      context.fillText('B ←', left + 48, height - 12)
+      context.fillStyle = '#ffd47a'
+      context.fillText('RESULTANT', left + 96, height - 12)
+      context.fillStyle = '#718b96'
+      context.textAlign = 'right'
+      context.fillText(
+          stableCoherentField
+            ? 'dashed curves · fixed amplitude envelope'
+          : coherent
+            ? 'the latest source change is propagating through the field'
+            : 'different frequencies · relative phase changes continuously',
+        right,
+        height - 12,
+      )
+      context.restore()
+    }
+
+    drawRef.current = draw
+    const resizeObserver = new ResizeObserver(() => draw(performance.now(), false))
+    resizeObserver.observe(canvas)
+    const animate = (now) => {
+      draw(now, true)
+      frameId = requestAnimationFrame(animate)
+    }
+    draw(performance.now(), false)
+    frameId = requestAnimationFrame(animate)
+
+    return () => {
+      resizeObserver.disconnect()
+      cancelAnimationFrame(frameId)
+      drawRef.current = null
+    }
+  }, [])
+
+  const pointerPosition = (event) => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top, width: rect.width, height: rect.height }
+  }
+
+  const sourcePosition = (source, width, height) => {
+    const left = 62
+    const right = width - 62
+    const fieldTop = 58
+    const fieldBottom = height * 0.61
+    return {
+      x: left + source.x * (right - left),
+      y: fieldTop + source.y * (fieldBottom - fieldTop),
+    }
+  }
+
+  const beginDrag = (event) => {
+    const pointer = pointerPosition(event)
+    if (!pointer) return
+    const sourceA = sourcePosition(leftSource, pointer.width, pointer.height)
+    const sourceB = sourcePosition(rightSource, pointer.width, pointer.height)
+    const settings = settingsRef.current
+    const sourceAMotion = Math.sin(
+      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current.left, timeRef.current).cycles
+        + settings.leftPhaseOffset * Math.PI / 180,
+    )
+      * STANDING_SOURCE_OSCILLATION * clamp(settings.leftAmplitude / 1.5, 0, 1)
+    const sourceBMotion = -Math.sin(
+      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current.right, timeRef.current).cycles
+        + settings.rightPhaseOffset * Math.PI / 180,
+    )
+      * STANDING_SOURCE_OSCILLATION * clamp(settings.rightAmplitude / 1.5, 0, 1)
+    const candidates = [
+      { source: 'left', base: sourceA, visualX: sourceA.x + sourceAMotion },
+      { source: 'right', base: sourceB, visualX: sourceB.x + sourceBMotion },
+    ]
+      .map((candidate) => ({
+        ...candidate,
+        deltaX: pointer.x - candidate.visualX,
+        deltaY: pointer.y - candidate.base.y,
+      }))
+      .filter((candidate) => Math.abs(candidate.deltaX) <= 30 && Math.abs(candidate.deltaY) <= 68)
+      .sort((first, second) => (
+        Math.hypot(first.deltaX / 30, first.deltaY / 68)
+        - Math.hypot(second.deltaX / 30, second.deltaY / 68)
+      ))
+    if (!candidates.length) return
+    const grabbed = candidates[0]
+    dragRef.current = {
+      source: grabbed.source,
+      offsetX: pointer.x - grabbed.base.x,
+      offsetY: pointer.y - grabbed.base.y,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const dragSource = (event) => {
+    if (!dragRef.current) return
+    const pointer = pointerPosition(event)
+    if (!pointer) return
+    const left = 62
+    const right = pointer.width - 62
+    const fieldTop = 58
+    const fieldBottom = pointer.height * 0.61
+    const draggedCentreX = pointer.x - dragRef.current.offsetX
+    const draggedCentreY = pointer.y - dragRef.current.offsetY
+    const normalisedX = (draggedCentreX - left) / (right - left)
+    const normalisedY = (draggedCentreY - fieldTop) / (fieldBottom - fieldTop)
+    const nextPosition = {
+      x: dragRef.current.source === 'left' ? clamp(normalisedX, 0.04, 0.79) : clamp(normalisedX, 0.21, 0.96),
+      y: clamp(normalisedY, 0.16, 0.84),
+    }
+    if (dragRef.current.source === 'left') onLeftSourceChange(nextPosition)
+    else onRightSourceChange(nextPosition)
+  }
+
+  const finishDrag = (event) => {
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="standing-wave-canvas"
+      role="img"
+      aria-label="Two draggable, longitudinally oscillating plane-wave sources facing one another. Cyan wave A travels right, coral wave B travels left, and their resultant displacement is plotted below the overlap."
+      onPointerDown={beginDrag}
+      onPointerMove={dragSource}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+    />
+  )
+}
+
+const REFLECTING_WALL_HALF_FRACTION = STANDING_BEAM_HALF_FRACTION
+
+function reflectionOverlapFraction(source, wall) {
+  if (source.x >= wall.x) return 0
+  const sourceTop = source.y - STANDING_BEAM_HALF_FRACTION
+  const sourceBottom = source.y + STANDING_BEAM_HALF_FRACTION
+  const wallTop = wall.y - REFLECTING_WALL_HALF_FRACTION
+  const wallBottom = wall.y + REFLECTING_WALL_HALF_FRACTION
+  return clamp(
+    (Math.min(sourceBottom, wallBottom) - Math.max(sourceTop, wallTop)) / (STANDING_BEAM_HALF_FRACTION * 2),
+    0,
+    1,
+  )
+}
+
+function SingleSourceReflectionCanvas({
+  source,
+  wall,
+  onSourceChange,
+  onWallChange,
+  frequency,
+  amplitude,
+  phaseOffset,
+  paused,
+  playbackSpeed,
+  stepSignal = 0,
+  nudgePhaseDivisions = 120,
+}) {
+  const canvasRef = useRef(null)
+  const drawRef = useRef(null)
+  const timeRef = useRef(0)
+  const dragRef = useRef(null)
+  const lastStepSignalRef = useRef(stepSignal)
+  const emissionHistoryRef = useRef(createWaveEmissionHistory(source, frequency, amplitude, phaseOffset))
+  const wallHistoryRef = useRef([{ startTime: 0, value: { ...wall } }])
+  const settingsRef = useRef({ source, wall, frequency, amplitude, phaseOffset, paused, playbackSpeed })
+
+  useEffect(() => {
+    recordWaveEmission(emissionHistoryRef.current, timeRef.current, {
+      source,
+      frequency,
+      amplitude,
+      phaseOffset,
+    })
+    recordTimelineState(wallHistoryRef.current, timeRef.current, wall)
+
+    settingsRef.current = { source, wall, frequency, amplitude, phaseOffset, paused, playbackSpeed }
+    drawRef.current?.(performance.now(), false)
+  }, [source, wall, frequency, amplitude, phaseOffset, paused, playbackSpeed])
+
+  useEffect(() => {
+    const stepCount = stepSignal - lastStepSignalRef.current
+    lastStepSignalRef.current = stepSignal
+    if (!paused || stepCount <= 0) return
+    timeRef.current += stepCount / (nudgePhaseDivisions * Math.max(frequency, 0.01))
+    drawRef.current?.(performance.now(), false)
+  }, [stepSignal, nudgePhaseDivisions, paused, frequency])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
+    const context = canvas.getContext('2d')
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let frameId
+    let previous = performance.now()
+
+    const draw = (now = performance.now(), advanceTime = true) => {
+      const rect = canvas.getBoundingClientRect()
+      const width = Math.max(300, rect.width)
+      const height = Math.max(440, rect.height)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const pixelWidth = Math.round(width * dpr)
+      const pixelHeight = Math.round(height * dpr)
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth
+        canvas.height = pixelHeight
+      }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      const settings = settingsRef.current
+      if (advanceTime && !settings.paused && !reducedMotion) {
+        timeRef.current += Math.min(50, now - previous) / 1000 * settings.playbackSpeed
+      }
+      previous = now
+
+      const left = 62
+      const right = width - 62
+      const fieldTop = 58
+      const fieldBottom = height * 0.61
+      const fieldHeight = fieldBottom - fieldTop
+      const beamHalfHeight = fieldHeight * STANDING_BEAM_HALF_FRACTION
+      const wallHalfHeight = fieldHeight * REFLECTING_WALL_HALF_FRACTION
+      const graphTop = fieldBottom + 76
+      const graphBottom = height - 38
+      const graphMiddle = (graphTop + graphBottom) / 2
+      const graphScale = Math.max(14, Math.min(25, (graphBottom - graphTop - 18) / 6))
+      const usableWidth = right - left
+      const toX = (normalisedX) => left + normalisedX * usableWidth
+      const toY = (normalisedY) => fieldTop + normalisedY * fieldHeight
+      const worldX = (x) => ((x - left) / usableWidth) * STANDING_WAVE_DOMAIN
+      const sourceX = toX(settings.source.x)
+      const sourceY = toY(settings.source.y)
+      const wallX = toX(settings.wall.x)
+      const wallY = toY(settings.wall.y)
+      const sourceWorldX = worldX(sourceX)
+      const wallWorldX = worldX(wallX)
+      const cavityLength = Math.max(0.01, wallWorldX - sourceWorldX)
+      const time = timeRef.current
+      const phaseOffsetRadians = settings.phaseOffset * Math.PI / 180
+      const overlapFraction = reflectionOverlapFraction(settings.source, settings.wall)
+      const aligned = overlapFraction > 0
+      const emissionHistory = emissionHistoryRef.current
+      const wallHistory = wallHistoryRef.current
+
+      const background = context.createLinearGradient(0, 0, width, height)
+      background.addColorStop(0, '#06131e')
+      background.addColorStop(0.52, '#0a2432')
+      background.addColorStop(1, '#07131f')
+      context.fillStyle = background
+      context.fillRect(0, 0, width, height)
+
+      const resultantPanelTop = fieldBottom + 17
+      const resultantPanelBottom = height - 27
+      context.save()
+      context.fillStyle = 'rgba(2, 13, 21, 0.38)'
+      context.strokeStyle = 'rgba(151, 199, 215, 0.16)'
+      context.lineWidth = 1
+      context.beginPath()
+      context.roundRect(left - 18, resultantPanelTop, usableWidth + 36, resultantPanelBottom - resultantPanelTop, 8)
+      context.fill()
+      context.stroke()
+      context.restore()
+
+      const incidentSampleAt = (xWorld, sampleTime = time) => (
+        travellingWaveSampleAt(emissionHistory, sampleTime, xWorld, 1)
+      )
+
+      const reflectedSampleAt = (xWorld, sampleTime = time) => {
+        let reflectionTime = sampleTime
+        let wallAtReflection = timelineStateAt(wallHistory, reflectionTime)
+        for (let iteration = 0; iteration < 8; iteration += 1) {
+          const historicWallWorldX = wallAtReflection.x * STANDING_WAVE_DOMAIN
+          const returnDistance = historicWallWorldX - xWorld
+          if (returnDistance < -1e-5) return null
+          const nextReflectionTime = sampleTime - returnDistance / STANDING_WAVE_SPEED
+          if (Math.abs(nextReflectionTime - reflectionTime) < 1e-6) break
+          reflectionTime = nextReflectionTime
+          wallAtReflection = timelineStateAt(wallHistory, reflectionTime)
+        }
+
+        const historicWallWorldX = wallAtReflection.x * STANDING_WAVE_DOMAIN
+        if (historicWallWorldX - xWorld < -1e-4) return null
+        const incident = incidentSampleAt(historicWallWorldX, reflectionTime)
+        if (!incident) return null
+        const verticalOverlap = clamp(
+          (STANDING_BEAM_HALF_FRACTION * 2 - Math.abs(incident.source.y - wallAtReflection.y))
+            / (STANDING_BEAM_HALF_FRACTION * 2),
+          0,
+          1,
+        )
+        if (verticalOverlap <= 0) return null
+        return {
+          ...incident,
+          amplitude: incident.amplitude * verticalOverlap,
+          phase: incident.phase + Math.PI,
+          reflectionTime,
+          wall: wallAtReflection,
+        }
+      }
+
+      const incidentPhaseAt = (xWorld, sampleTime = time) => incidentSampleAt(xWorld, sampleTime)?.phase ?? null
+      const reflectedPhaseAt = (xWorld, sampleTime = time) => reflectedSampleAt(xWorld, sampleTime)?.phase ?? null
+
+      const drawCausalBeam = (sampleAt, startX, endX, colours) => {
+        for (let x = Math.min(startX, endX); x <= Math.max(startX, endX); x += 3) {
+          const sample = sampleAt(worldX(x))
+          if (!sample) continue
+          const centreY = toY(sample.source.y)
+          const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
+          colours.forEach((colour, index) => gradient.addColorStop(index / (colours.length - 1), colour))
+          context.save()
+          context.globalAlpha = 0.25 + 0.75 * clamp(sample.amplitude / 1.5, 0, 1)
+          context.fillStyle = gradient
+          context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+          context.restore()
+        }
+      }
+
+      drawCausalBeam(incidentSampleAt, left, aligned ? wallX : right, [
+        'rgba(102,221,243,0)',
+        'rgba(102,221,243,0.075)',
+        'rgba(102,221,243,0.12)',
+        'rgba(102,221,243,0.075)',
+        'rgba(102,221,243,0)',
+      ])
+      drawCausalBeam(reflectedSampleAt, left, right, [
+        'rgba(255,150,122,0)',
+        'rgba(255,150,122,0.055)',
+        'rgba(255,150,122,0.1)',
+        'rgba(255,150,122,0.055)',
+        'rgba(255,150,122,0)',
+      ])
+
+      context.save()
+      context.globalCompositeOperation = 'screen'
+      for (let x = left; x <= (aligned ? wallX : right); x += 3) {
+        const sample = incidentSampleAt(worldX(x))
+        if (!sample) continue
+        const centreY = toY(sample.source.y)
+        const displacement = Math.sin(sample.phase)
+        const strength = Math.abs(displacement) ** 1.65 * clamp(sample.amplitude / 1.5, 0, 1)
+        context.fillStyle = displacement >= 0
+          ? `rgba(72,224,247,${strength * 0.13})`
+          : `rgba(91,112,255,${strength * 0.13})`
+        context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+      }
+      for (let x = left; x <= right; x += 3) {
+        const sample = reflectedSampleAt(worldX(x))
+        if (!sample) continue
+        const centreY = toY(sample.source.y)
+        const displacement = Math.sin(sample.phase)
+        const strength = Math.abs(displacement) ** 1.65 * clamp(sample.amplitude / 1.5, 0, 1)
+        context.fillStyle = displacement >= 0
+          ? `rgba(255,149,119,${strength * 0.12})`
+          : `rgba(220,80,160,${strength * 0.11})`
+        context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+      }
+      context.restore()
+
+      const findPhaseFronts = (startX, endX, phaseAt, targetCycle) => {
+        const direction = Math.sign(endX - startX)
+        const totalDistance = Math.abs(endX - startX)
+        const positions = []
+        let previousX = startX
+        let previousPhase = phaseAt(worldX(startX))
+        for (let distance = 2; distance <= totalDistance + 2; distance += 2) {
+          const boundedDistance = Math.min(distance, totalDistance)
+          const x = startX + direction * boundedDistance
+          const phase = phaseAt(worldX(x))
+          if (phase !== null && previousPhase !== null) {
+            const previousValue = previousPhase / (Math.PI * 2) - targetCycle
+            const value = phase / (Math.PI * 2) - targetCycle
+            const firstInteger = Math.ceil(Math.min(previousValue, value) - 1e-8)
+            const lastInteger = Math.floor(Math.max(previousValue, value) + 1e-8)
+            for (let integer = firstInteger; integer <= lastInteger; integer += 1) {
+              const denominator = value - previousValue
+              if (Math.abs(denominator) < 1e-9) continue
+              const fraction = (integer - previousValue) / denominator
+              if (fraction <= 1e-6 || fraction > 1 + 1e-6) continue
+              positions.push(previousX + (x - previousX) * fraction)
+            }
+          }
+          previousX = x
+          previousPhase = phase
+          if (boundedDistance === totalDistance) break
+        }
+        return positions
+      }
+
+      const drawFront = (x, sampleAt, colour, dashed = false) => {
+        const sample = sampleAt(worldX(x))
+        if (!sample) return
+        const centreY = toY(sample.source.y)
+        context.save()
+        context.strokeStyle = colour
+        context.globalAlpha = 0.34 + 0.42 * sample.amplitude / 1.5
+        context.lineWidth = dashed ? 1 : 1.65
+        context.setLineDash(dashed ? [5, 5] : [])
+        context.beginPath()
+        context.moveTo(x, centreY - beamHalfHeight * 0.88)
+        context.lineTo(x, centreY + beamHalfHeight * 0.88)
+        context.stroke()
+        context.restore()
+      }
+
+      const incidentEndX = aligned ? wallX : right
+      findPhaseFronts(left, incidentEndX, incidentPhaseAt, 0.25).forEach((x) => drawFront(x, incidentSampleAt, '#78e7fa'))
+      findPhaseFronts(left, incidentEndX, incidentPhaseAt, 0.75).forEach((x) => drawFront(x, incidentSampleAt, '#78e7fa', true))
+      const reflectedCrests = findPhaseFronts(right, left, reflectedPhaseAt, 0.25)
+      const reflectedTroughs = findPhaseFronts(right, left, reflectedPhaseAt, 0.75)
+      reflectedCrests.forEach((x) => drawFront(x, reflectedSampleAt, '#ff9b80'))
+      reflectedTroughs.forEach((x) => drawFront(x, reflectedSampleAt, '#ff9b80', true))
+
+      for (let x = left; x <= right; x += 4) {
+          const xWorld = worldX(x)
+          const incidentSample = incidentSampleAt(xWorld)
+          const reflectedSample = reflectedSampleAt(xWorld)
+          if (!incidentSample || !reflectedSample) continue
+          const incidentCentreY = toY(incidentSample.source.y)
+          const reflectedCentreY = toY(reflectedSample.source.y)
+          const causalOverlapTop = Math.max(incidentCentreY - beamHalfHeight, reflectedCentreY - beamHalfHeight)
+          const causalOverlapBottom = Math.min(incidentCentreY + beamHalfHeight, reflectedCentreY + beamHalfHeight)
+          if (causalOverlapBottom <= causalOverlapTop) continue
+          const incident = incidentSample.amplitude * Math.sin(incidentSample.phase)
+          const reflected = reflectedSample.amplitude * Math.sin(reflectedSample.phase)
+          const resultant = incident + reflected
+          const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, incidentSample.amplitude + reflectedSample.amplitude))
+          context.fillStyle = resultant >= 0
+            ? `rgba(255,212,122,${0.025 + strength * 0.16})`
+            : `rgba(183,176,255,${0.018 + strength * 0.12})`
+          context.fillRect(x, causalOverlapTop, 4.5, causalOverlapBottom - causalOverlapTop)
+      }
+
+      const drawHorizontalArrow = (x, y, direction, colour, text) => {
+        const length = 52 * direction
+        context.save()
+        context.strokeStyle = colour
+        context.fillStyle = colour
+        context.lineWidth = 2
+        context.beginPath()
+        context.moveTo(x, y)
+        context.lineTo(x + length, y)
+        context.stroke()
+        context.beginPath()
+        context.moveTo(x + length, y)
+        context.lineTo(x + length - 9 * direction, y - 6)
+        context.lineTo(x + length - 9 * direction, y + 6)
+        context.closePath()
+        context.fill()
+        context.font = '700 11px DM Sans, sans-serif'
+        context.textAlign = direction > 0 ? 'left' : 'right'
+        context.fillText(text, x + length + 9 * direction, y + 4)
+        context.restore()
+      }
+
+      drawHorizontalArrow(sourceX + 18, sourceY - beamHalfHeight - 35, 1, '#78e7fa', 'INCIDENT')
+      if (reflectedCrests.length || reflectedTroughs.length) {
+        drawHorizontalArrow(wallX - 18, sourceY + beamHalfHeight + 17, -1, '#ff9b80', 'REFLECTED')
+      }
+
+      const sourceMotion = Math.sin(
+        -2 * Math.PI * waveEmissionAt(emissionHistory, time).cycles + phaseOffsetRadians,
+      ) * STANDING_SOURCE_OSCILLATION * clamp(settings.amplitude / 1.5, 0, 1)
+      context.save()
+      context.shadowColor = '#78e7fa'
+      context.shadowBlur = 13
+      context.fillStyle = '#78e7fa'
+      context.beginPath()
+      context.roundRect(sourceX + sourceMotion - 7, sourceY - 53, 14, 106, 6)
+      context.fill()
+      context.shadowBlur = 0
+      context.fillStyle = '#07131f'
+      context.beginPath()
+      context.arc(sourceX + sourceMotion, sourceY, 5, 0, Math.PI * 2)
+      context.fill()
+      context.strokeStyle = '#78e7fa'
+      context.lineWidth = 2
+      context.beginPath()
+      context.arc(sourceX + sourceMotion, sourceY, 11, 0, Math.PI * 2)
+      context.stroke()
+      context.fillStyle = '#78e7fa'
+      context.font = '700 12px DM Sans, sans-serif'
+      context.textAlign = 'left'
+      context.fillText('SOURCE', sourceX + 16, sourceY - 63)
+      context.font = '500 9px DM Sans, sans-serif'
+      context.fillStyle = 'rgba(220,240,246,0.68)'
+      context.fillText('DRAG', sourceX + 16, sourceY - 48)
+      context.restore()
+
+      context.save()
+      context.shadowColor = aligned ? '#ffd47a' : '#b7cbd3'
+      context.shadowBlur = aligned ? 12 : 5
+      context.fillStyle = aligned ? '#f1d79d' : '#b9cbd1'
+      context.beginPath()
+      context.roundRect(wallX - 8, wallY - wallHalfHeight, 16, wallHalfHeight * 2, 4)
+      context.fill()
+      context.shadowBlur = 0
+      context.strokeStyle = aligned ? '#fff0c8' : '#dbe8ec'
+      context.lineWidth = 2
+      context.stroke()
+      context.fillStyle = aligned ? '#ffd47a' : '#b9cbd1'
+      context.font = '700 12px DM Sans, sans-serif'
+      context.textAlign = 'right'
+      context.fillText('REFLECTING WALL', wallX - 16, wallY - wallHalfHeight - 12)
+      context.font = '500 9px DM Sans, sans-serif'
+      context.fillStyle = 'rgba(220,240,246,0.68)'
+      context.fillText('DRAG', wallX - 16, wallY - wallHalfHeight + 3)
+      context.restore()
+
+      context.save()
+      context.strokeStyle = 'rgba(151,199,215,0.2)'
+      context.lineWidth = 1
+      context.beginPath()
+      context.moveTo(left, graphMiddle)
+      context.lineTo(right, graphMiddle)
+      context.stroke()
+      context.fillStyle = '#91aab4'
+      context.font = '700 11px DM Sans, sans-serif'
+      context.textAlign = 'left'
+      context.fillText('RESULTANT DISPLACEMENT BETWEEN SOURCE AND WALL', left, fieldBottom + 40)
+      context.restore()
+
+      const sampleCount = Math.max(240, Math.round(wallX - sourceX))
+      const drawSpatialWave = (which, colour, lineWidth, opacity = 1) => {
+        context.save()
+        context.strokeStyle = colour
+        context.globalAlpha = opacity
+        context.lineWidth = lineWidth
+        context.lineJoin = 'round'
+        context.beginPath()
+        let drawing = false
+        for (let index = 0; index <= sampleCount; index += 1) {
+          const x = sourceX + index / sampleCount * (wallX - sourceX)
+          const xWorld = worldX(x)
+          const incidentSample = incidentSampleAt(xWorld)
+          const reflectedSample = reflectedSampleAt(xWorld)
+          if (!incidentSample) {
+            drawing = false
+            continue
+          }
+          const incident = incidentSample.amplitude * Math.sin(incidentSample.phase)
+          const reflected = reflectedSample === null
+            ? null
+            : reflectedSample.amplitude * Math.sin(reflectedSample.phase)
+          if (which === 'reflected' && reflected === null) {
+            drawing = false
+            continue
+          }
+          const value = which === 'incident' ? incident : which === 'reflected' ? reflected : incident + (reflected ?? 0)
+          const y = graphMiddle - value * graphScale
+          if (!drawing) context.moveTo(x, y)
+          else context.lineTo(x, y)
+          drawing = true
+        }
+        context.stroke()
+        context.restore()
+      }
+
+      if (wallX > sourceX) {
+        drawSpatialWave('incident', '#78e7fa', 1.15, 0.5)
+        drawSpatialWave('reflected', '#ff9b80', 1.15, 0.54)
+        drawSpatialWave('sum', '#ffd47a', 3.2, 1)
+      }
+
+      let reflectionMessage = 'Wall outside the beam · no reflected wave'
+      const reflectedAtWall = reflectedSampleAt(wallWorldX)
+      const reflectedAtSource = reflectedSampleAt(sourceWorldX)
+      let reflectedFrontWorldX = null
+      for (let index = 0; index <= 120; index += 1) {
+        const sampledWorldX = wallWorldX - index / 120 * cavityLength
+        if (reflectedSampleAt(sampledWorldX)) reflectedFrontWorldX = sampledWorldX
+      }
+      if (reflectedAtWall) {
+        const returnFraction = reflectedFrontWorldX === null
+          ? 0
+          : clamp((wallWorldX - reflectedFrontWorldX) / cavityLength, 0, 1)
+        reflectionMessage = reflectedAtSource
+          ? 'Standing wave established · reflection continues past the source'
+          : `Reflected wave returning · ${Math.round(returnFraction * 100)}% of cavity filled`
+      } else if (reflectedFrontWorldX !== null) {
+        reflectionMessage = 'Wall moved out of line · the last reflected wave is leaving'
+      }
+
+      context.save()
+      context.font = '500 10px DM Sans, sans-serif'
+      context.textAlign = 'left'
+      context.fillStyle = '#78e7fa'
+      context.fillText('INCIDENT →', left, height - 12)
+      context.fillStyle = '#ff9b80'
+      context.fillText('REFLECTED ←', left + 86, height - 12)
+      context.fillStyle = '#ffd47a'
+      context.fillText('RESULTANT', left + 188, height - 12)
+      context.fillStyle = '#718b96'
+      context.textAlign = 'right'
+      context.fillText(reflectionMessage, right, height - 12)
+      context.restore()
+    }
+
+    drawRef.current = draw
+    const resizeObserver = new ResizeObserver(() => draw(performance.now(), false))
+    resizeObserver.observe(canvas)
+    const animate = (now) => {
+      draw(now, true)
+      frameId = requestAnimationFrame(animate)
+    }
+    draw(performance.now(), false)
+    frameId = requestAnimationFrame(animate)
+    return () => {
+      resizeObserver.disconnect()
+      cancelAnimationFrame(frameId)
+      drawRef.current = null
+    }
+  }, [])
+
+  const pointerPosition = (event) => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top, width: rect.width, height: rect.height }
+  }
+
+  const objectPosition = (object, width, height) => {
+    const left = 62
+    const right = width - 62
+    const fieldTop = 58
+    const fieldBottom = height * 0.61
+    return {
+      x: left + object.x * (right - left),
+      y: fieldTop + object.y * (fieldBottom - fieldTop),
+      fieldHeight: fieldBottom - fieldTop,
+    }
+  }
+
+  const beginDrag = (event) => {
+    const pointer = pointerPosition(event)
+    if (!pointer) return
+    const sourcePosition = objectPosition(source, pointer.width, pointer.height)
+    const wallPosition = objectPosition(wall, pointer.width, pointer.height)
+    const sourceMotion = Math.sin(
+      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current, timeRef.current).cycles
+        + settingsRef.current.phaseOffset * Math.PI / 180,
+    ) * STANDING_SOURCE_OSCILLATION * clamp(settingsRef.current.amplitude / 1.5, 0, 1)
+    const candidates = [
+      {
+        object: 'source',
+        centreX: sourcePosition.x,
+        centreY: sourcePosition.y,
+        hitX: sourcePosition.x + sourceMotion,
+        halfWidth: 30,
+        halfHeight: 68,
+      },
+      {
+        object: 'wall',
+        centreX: wallPosition.x,
+        centreY: wallPosition.y,
+        hitX: wallPosition.x,
+        halfWidth: 28,
+        halfHeight: wallPosition.fieldHeight * REFLECTING_WALL_HALF_FRACTION + 12,
+      },
+    ]
+      .map((candidate) => ({
+        ...candidate,
+        deltaX: pointer.x - candidate.hitX,
+        deltaY: pointer.y - candidate.centreY,
+      }))
+      .filter((candidate) => Math.abs(candidate.deltaX) <= candidate.halfWidth && Math.abs(candidate.deltaY) <= candidate.halfHeight)
+      .sort((first, second) => (
+        Math.hypot(first.deltaX / first.halfWidth, first.deltaY / first.halfHeight)
+        - Math.hypot(second.deltaX / second.halfWidth, second.deltaY / second.halfHeight)
+      ))
+    if (!candidates.length) return
+    const grabbed = candidates[0]
+    dragRef.current = {
+      object: grabbed.object,
+      offsetX: pointer.x - grabbed.centreX,
+      offsetY: pointer.y - grabbed.centreY,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const dragObject = (event) => {
+    if (!dragRef.current) return
+    const pointer = pointerPosition(event)
+    if (!pointer) return
+    const left = 62
+    const right = pointer.width - 62
+    const fieldTop = 58
+    const fieldBottom = pointer.height * 0.61
+    const normalisedX = (pointer.x - dragRef.current.offsetX - left) / (right - left)
+    const normalisedY = (pointer.y - dragRef.current.offsetY - fieldTop) / (fieldBottom - fieldTop)
+    if (dragRef.current.object === 'source') {
+      onSourceChange({ x: clamp(normalisedX, 0.04, 0.5), y: clamp(normalisedY, 0.16, 0.84) })
+    } else {
+      onWallChange({ x: clamp(normalisedX, 0.5, 0.96), y: clamp(normalisedY, 0.16, 0.84) })
+    }
+  }
+
+  const finishDrag = (event) => {
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="standing-wave-canvas"
+      role="img"
+      aria-label="A draggable plane-wave source aimed right and a draggable reflecting wall. Aligning them creates a phase-inverted reflected wave that progressively forms a standing wave, then continues past the source without reflecting again."
+      onPointerDown={beginDrag}
+      onPointerMove={dragObject}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+    />
+  )
+}
+
+function StandingWaveExplorer({ onHome }) {
+  const initialLeftSource = { x: 0.11, y: 0.3 }
+  const initialRightSource = { x: 0.89, y: 0.7 }
+  const initialSingleSource = { x: 0.11, y: 0.22 }
+  const initialReflectingWall = { x: 0.84, y: 0.78 }
+  const [standingView, setStandingView] = useState('two-sources')
+  const [leftSource, setLeftSource] = useState(initialLeftSource)
+  const [rightSource, setRightSource] = useState(initialRightSource)
+  const [singleSource, setSingleSource] = useState(initialSingleSource)
+  const [reflectingWall, setReflectingWall] = useState(initialReflectingWall)
+  const [twoSourceResetKey, setTwoSourceResetKey] = useState(0)
+  const [singleResetKey, setSingleResetKey] = useState(0)
+  const [leftFrequency, setLeftFrequency] = useState(1)
+  const [rightFrequency, setRightFrequency] = useState(1)
+  const [leftAmplitude, setLeftAmplitude] = useState(1)
+  const [rightAmplitude, setRightAmplitude] = useState(1)
+  const [leftPhaseOffset, setLeftPhaseOffset] = useState(0)
+  const [rightPhaseOffset, setRightPhaseOffset] = useState(0)
+  const [paused, setPaused] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [animationStep, setAnimationStep] = useState(0)
+
+  const coherent = Math.abs(leftFrequency - rightFrequency) < 1e-6
+  const balanced = Math.abs(leftAmplitude - rightAmplitude) < 0.025
+  const verticalOffset = Math.abs(leftSource.y - rightSource.y)
+  const verticalOverlapFraction = clamp((STANDING_BEAM_HALF_FRACTION * 2 - verticalOffset) / (STANDING_BEAM_HALF_FRACTION * 2), 0, 1)
+  const sourcesFaceOneAnother = leftSource.x < rightSource.x
+  const overlapFraction = sourcesFaceOneAnother ? verticalOverlapFraction : 0
+  const hasOverlap = overlapFraction > 0
+  const wavelengthA = STANDING_WAVE_SPEED / leftFrequency
+  const wavelengthB = STANDING_WAVE_SPEED / rightFrequency
+  const sourceSeparation = Math.abs(rightSource.x - leftSource.x) * STANDING_WAVE_DOMAIN
+  const wallOverlapFraction = reflectionOverlapFraction(singleSource, reflectingWall)
+  const wallAligned = wallOverlapFraction > 0
+  const sourceWallDistance = Math.abs(reflectingWall.x - singleSource.x) * STANDING_WAVE_DOMAIN
+
+  let stateClass = 'separated'
+  let stateTitle = 'No overlap yet'
+  let stateDescription = sourcesFaceOneAnother
+    ? 'Drag either source vertically until the two beams cross.'
+    : 'Move the right-travelling source to the left of the left-travelling source so the beams face one another.'
+  if (hasOverlap && !coherent) {
+    stateClass = 'incoherent'
+    stateTitle = 'Not coherent · no fixed nodes'
+    stateDescription = 'The frequencies differ, so the relative phase changes and the interference pattern drifts.'
+  } else if (hasOverlap && coherent && !balanced) {
+    stateClass = 'partial'
+    stateTitle = 'Coherent waves · incomplete nodes'
+    stateDescription = 'The pattern is stationary, but unequal amplitudes prevent complete cancellation at the nodes.'
+  } else if (hasOverlap && coherent) {
+    stateClass = 'standing'
+    stateTitle = 'Standing wave · fixed nodes and antinodes'
+    stateDescription = 'Equal-frequency, equal-amplitude waves travel in opposite directions with a fixed relative phase.'
+  }
+
+  const reset = () => {
+    setLeftSource(initialLeftSource)
+    setRightSource(initialRightSource)
+    setSingleSource(initialSingleSource)
+    setReflectingWall(initialReflectingWall)
+    setTwoSourceResetKey((value) => value + 1)
+    setSingleResetKey((value) => value + 1)
+    setLeftFrequency(1)
+    setRightFrequency(1)
+    setLeftAmplitude(1)
+    setRightAmplitude(1)
+    setLeftPhaseOffset(0)
+    setRightPhaseOffset(0)
+    setPlaybackSpeed(1)
+    setAnimationStep(0)
+    setPaused(false)
+  }
+
+  return (
+    <main className="explorer-page investigation-page standing-wave-page">
+      <header className="site-header">
+        <button className="brand brand-button" type="button" onClick={onHome} aria-label="Back to all investigations">
+          <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
+          <span>Wave Interference Explorer</span>
+        </button>
+        <span className="curriculum-tag">Standing waves</span>
+      </header>
+
+      <section className="investigation-intro">
+        <div>
+          <p className="eyebrow">Opposing travelling waves</p>
+          <div className="standing-title-row">
+            <h1>Standing waves</h1>
+            <div className="standing-view-tabs" role="tablist" aria-label="Standing-wave arrangements">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={standingView === 'two-sources'}
+                className={standingView === 'two-sources' ? 'active' : ''}
+                onClick={() => setStandingView('two-sources')}
+              >
+                2 sources
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={standingView === 'one-source'}
+                className={standingView === 'one-source' ? 'active' : ''}
+                onClick={() => setStandingView('one-source')}
+              >
+                1 source
+              </button>
+            </div>
+          </div>
+        </div>
+        <p>{standingView === 'two-sources'
+          ? 'Two plane waves travelling in opposite directions superpose. A stable standing wave forms only when their frequencies match and their relative phase remains fixed.'
+          : 'A travelling plane wave reflects from a fixed wall. As the reflected wave returns, it superposes with the incident wave and progressively establishes a standing wave.'}</p>
+      </section>
+
+      <section className="standing-shell" aria-label="Standing-wave interactive investigation">
+        {standingView === 'two-sources' ? (
+          <>
+            <div className="standing-toolbar">
+              <section className="standing-source-controls source-a-controls" aria-label="Wave A controls">
+                <h2><span>Source A</span><strong>travels right →</strong></h2>
+                <div>
+                  <RangeControl id="standing-frequency-a" label="Frequency, f₁" value={leftFrequency} min="0.5" max="2" step="0.05" unit=" Hz" onChange={setLeftFrequency} />
+                  <RangeControl id="standing-amplitude-a" label="Amplitude, A₁" value={leftAmplitude} min="0" max="1.5" step="0.05" unit="" onChange={setLeftAmplitude} />
+                  <PhaseKnob id="standing-phase-a" label="Phase, φ₁" value={leftPhaseOffset} onChange={setLeftPhaseOffset} colour="#78e7fa" />
+                </div>
+              </section>
+              <section className="standing-source-controls source-b-controls" aria-label="Wave B controls">
+                <h2><span>Source B</span><strong>← travels left</strong></h2>
+                <div>
+                  <RangeControl id="standing-frequency-b" label="Frequency, f₂" value={rightFrequency} min="0.5" max="2" step="0.05" unit=" Hz" onChange={setRightFrequency} />
+                  <RangeControl id="standing-amplitude-b" label="Amplitude, A₂" value={rightAmplitude} min="0" max="1.5" step="0.05" unit="" onChange={setRightAmplitude} />
+                  <PhaseKnob id="standing-phase-b" label="Phase, φ₂" value={rightPhaseOffset} onChange={setRightPhaseOffset} colour="#ff9b80" />
+                </div>
+              </section>
+              <div className="standing-playback">
+                <RangeControl id="standing-speed" label="Animation speed" value={playbackSpeed} min="0.1" max="2" step="0.1" unit="×" onChange={setPlaybackSpeed} />
+                <div>
+                  <button className="icon-button" type="button" onClick={() => setPaused((value) => !value)}>
+                    <IconPlay paused={paused} />
+                    <span>{paused ? 'Play' : 'Pause'}</span>
+                  </button>
+                  {paused && (
+                    <button className="icon-button animation-nudge" type="button" onClick={() => setAnimationStep((current) => current + 1)} aria-label="Advance the wave animation by one small phase step" title="Advance one small phase step">
+                      <IconNudge />
+                      <span>Nudge</span>
+                    </button>
+                  )}
+                  <button className="standing-reset" type="button" onClick={reset}>Reset</button>
+                </div>
+              </div>
+            </div>
+
+            <div className={`standing-status ${stateClass}`} aria-live="polite">
+              <strong>{stateTitle}</strong>
+              <span>{stateDescription}</span>
+              <dl>
+                <div><dt>λ₁</dt><dd>{formatValue(wavelengthA)} units</dd></div>
+                <div><dt>λ₂</dt><dd>{formatValue(wavelengthB)} units</dd></div>
+                <div><dt>Source separation</dt><dd>{formatValue(sourceSeparation)} units</dd></div>
+                <div><dt>Beam overlap</dt><dd>{Math.round(overlapFraction * 100)}%</dd></div>
+              </dl>
+            </div>
+
+            <div className="standing-canvas-wrap">
+              <StandingWaveCanvas
+                key={twoSourceResetKey}
+                leftSource={leftSource}
+                rightSource={rightSource}
+                onLeftSourceChange={setLeftSource}
+                onRightSourceChange={setRightSource}
+                leftFrequency={leftFrequency}
+                rightFrequency={rightFrequency}
+                leftAmplitude={leftAmplitude}
+                rightAmplitude={rightAmplitude}
+                leftPhaseOffset={leftPhaseOffset}
+                rightPhaseOffset={rightPhaseOffset}
+                paused={paused}
+                playbackSpeed={playbackSpeed}
+                stepSignal={animationStep}
+              />
+              <p className="standing-drag-hint">Drag either source horizontally to shift the phase, or vertically to change how much the beams overlap.</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="standing-toolbar single-source-toolbar">
+              <section className="standing-source-controls source-a-controls" aria-label="Source controls">
+                <h2><span>Source</span><strong>travels right →</strong></h2>
+                <div>
+                  <RangeControl id="standing-single-frequency" label="Frequency, f" value={leftFrequency} min="0.5" max="2" step="0.05" unit=" Hz" onChange={setLeftFrequency} />
+                  <RangeControl id="standing-single-amplitude" label="Amplitude, A" value={leftAmplitude} min="0" max="1.5" step="0.05" unit="" onChange={setLeftAmplitude} />
+                  <PhaseKnob id="standing-single-phase" label="Phase, φ" value={leftPhaseOffset} onChange={setLeftPhaseOffset} colour="#78e7fa" />
+                </div>
+              </section>
+              <section className="standing-wall-summary" aria-label="Reflecting wall information">
+                <h2>Reflecting wall <strong>drag in the field</strong></h2>
+                <p>{wallAligned ? 'The incident beam now strikes the wall and a phase-inverted reflection returns.' : 'The wall initially misses the beam. Drag it into line to begin the reflection.'}</p>
+              </section>
+              <div className="standing-playback">
+                <RangeControl id="standing-single-speed" label="Animation speed" value={playbackSpeed} min="0.1" max="2" step="0.1" unit="×" onChange={setPlaybackSpeed} />
+                <div>
+                  <button className="icon-button" type="button" onClick={() => setPaused((value) => !value)}>
+                    <IconPlay paused={paused} />
+                    <span>{paused ? 'Play' : 'Pause'}</span>
+                  </button>
+                  {paused && (
+                    <button className="icon-button animation-nudge" type="button" onClick={() => setAnimationStep((current) => current + 1)} aria-label="Advance the wave animation by one small phase step" title="Advance one small phase step">
+                      <IconNudge />
+                      <span>Nudge</span>
+                    </button>
+                  )}
+                  <button className="standing-reset" type="button" onClick={reset}>Reset</button>
+                </div>
+              </div>
+            </div>
+
+            <div className={`standing-status ${wallAligned ? 'standing' : 'separated'}`} aria-live="polite">
+              <strong>{wallAligned ? 'Reflection started at the wall' : 'No reflection yet'}</strong>
+              <span>{wallAligned
+                ? 'The return wave now advances towards the source, progressively filling the space with a standing-wave pattern.'
+                : 'The source is aimed towards the wall, but their vertical positions do not yet overlap.'}</span>
+              <dl>
+                <div><dt>λ</dt><dd>{formatValue(wavelengthA)} units</dd></div>
+                <div><dt>Source–wall distance</dt><dd>{formatValue(sourceWallDistance)} units</dd></div>
+                <div><dt>Wall overlap</dt><dd>{Math.round(wallOverlapFraction * 100)}%</dd></div>
+                <div><dt>Wall boundary</dt><dd>fixed node</dd></div>
+              </dl>
+            </div>
+
+            <div className="standing-canvas-wrap">
+              <SingleSourceReflectionCanvas
+                key={singleResetKey}
+                source={singleSource}
+                wall={reflectingWall}
+                onSourceChange={setSingleSource}
+                onWallChange={setReflectingWall}
+                frequency={leftFrequency}
+                amplitude={leftAmplitude}
+                phaseOffset={leftPhaseOffset}
+                paused={paused}
+                playbackSpeed={playbackSpeed}
+                stepSignal={animationStep}
+              />
+              <p className="standing-drag-hint">Drag the source or reflecting wall into line. The reflected wave will then return from the wall towards the source.</p>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="module-principles standing-principles">
+        <article>
+          <span>01</span>
+          <h2>{standingView === 'two-sources' ? 'The waves must oppose one another' : 'Reflection supplies the opposing wave'}</h2>
+          <p>{standingView === 'two-sources'
+            ? 'The sources face in opposite directions, so one plane wave travels right while the other travels left.'
+            : 'Once the beam strikes the wall, a phase-inverted copy travels back through the incident wave.'}</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h2>{standingView === 'two-sources' ? 'Coherence fixes the pattern' : 'The pattern forms progressively'}</h2>
+          <p>{standingView === 'two-sources'
+            ? 'Matching frequencies keep the relative phase constant. The nodes and antinodes then remain at fixed positions.'
+            : 'The standing-wave region grows from the wall towards the source as the first reflected wave returns.'}</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h2>{standingView === 'two-sources' ? 'Equal amplitudes make complete nodes' : 'The source does not reflect the return'}</h2>
+          <p>{standingView === 'two-sources'
+            ? 'If the coherent waves have unequal amplitudes, the pattern remains stationary but the nodes do not reach zero displacement.'
+            : 'The returning wave passes behind the source and continues out of the model. It does not reflect again to create an artificial second echo.'}</p>
+        </article>
+      </section>
+
+      <footer>
+        <button className="footer-home" type="button" onClick={onHome}>← Choose another investigation</button>
+      </footer>
+    </main>
+  )
+}
+
 function ModuleArtwork({ type }) {
   if (type === 'double-slit') {
     return (
@@ -4258,6 +5990,41 @@ function ModuleArtwork({ type }) {
           <path d="M125 43 284 18M125 73l159-9M125 103h159M125 133l159 13M125 163l159 29" />
         </g>
         <g className="art-screen"><path d="M286 12v186" /><path d="M279 18h14M275 64h22M268 103h36M275 146h22M279 192h14" /></g>
+      </svg>
+    )
+  }
+
+  if (type === 'standing-waves') {
+    return (
+      <svg viewBox="0 0 320 210" role="img" aria-label="Two opposing plane waves overlapping to form a standing wave">
+        <defs>
+          <linearGradient id="standing-wash" x1="0" x2="1">
+            <stop offset="0" stopColor="#241b2c" />
+            <stop offset="0.5" stopColor="#163041" />
+            <stop offset="1" stopColor="#351d27" />
+          </linearGradient>
+        </defs>
+        <rect width="320" height="210" fill="url(#standing-wash)" />
+        <g className="art-standing-source source-a">
+          <path d="M28 39v132" />
+          <path d="M39 58h54m0 0-12-8m12 8-12 8" />
+        </g>
+        <g className="art-standing-source source-b">
+          <path d="M292 39v132" />
+          <path d="M281 152h-54m0 0 12-8m-12 8 12 8" />
+        </g>
+        <g className="art-standing-fronts source-a">
+          <path d="M72 74v62M98 74v62M124 74v62M150 74v62" />
+        </g>
+        <g className="art-standing-fronts source-b">
+          <path d="M248 74v62M222 74v62M196 74v62M170 74v62" />
+        </g>
+        <path className="art-standing-envelope" d="M48 105c15-36 30-36 45 0s30 36 45 0 30-36 45 0 30 36 45 0 30-36 44 0" />
+        <path className="art-standing-result" d="M48 105c15-25 30-25 45 0s30 25 45 0 30-25 45 0 30 25 45 0 30-25 44 0" />
+        <g className="art-standing-nodes">
+          <circle cx="48" cy="105" r="3" /><circle cx="93" cy="105" r="3" /><circle cx="138" cy="105" r="3" />
+          <circle cx="183" cy="105" r="3" /><circle cx="228" cy="105" r="3" /><circle cx="272" cy="105" r="3" />
+        </g>
       </svg>
     )
   }
@@ -4350,6 +6117,7 @@ function App() {
 
   if (activeModule === 'home') return <LandingPage onOpen={openModule} />
   if (activeModule === 'huygens') return <HuygensExplorer onHome={openHome} />
+  if (activeModule === 'standing-waves') return <StandingWaveExplorer onHome={openHome} />
 
   return <InterferenceInvestigation key={activeModule} kind={activeModule} onHome={openHome} />
 }
