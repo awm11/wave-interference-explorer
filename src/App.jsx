@@ -706,7 +706,7 @@ function HuygensExplorer({ onHome }) {
         <span className="curriculum-tag">Huygens’ wavelets</span>
       </header>
 
-      <section className="intro" id="top">
+      <section className="intro huygens-intro" id="top">
         <div>
           <p className="eyebrow">See the construction, then see the result</p>
           <h1>How a wave spreads after an aperture</h1>
@@ -2260,6 +2260,21 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
   const toX = (value) => originX + value * scale
   const toY = (value) => centreY - value * scale
   const barrierX = toX(0)
+  // Field/intensity legends are interface furniture rather than part of the
+  // scaled apparatus. Anchor grating legends to their 1× screen position so
+  // that zooming the far field does not move them with the world geometry.
+  const legendReferenceScale = farFieldView
+    ? Math.min(
+      width / (Math.max(24.5, config.screenDistance + 2.5) - worldMinX),
+      (height - padding * 2) / (baseVerticalExtent * 2),
+    )
+    : scale
+  const fieldLegendX = farFieldView
+    ? (2.8 - worldMinX) * legendReferenceScale
+    : toX(2.8)
+  const fieldLegendY = farFieldView
+    ? centreY - 8.42 * legendReferenceScale
+    : toY(8.42)
   const screenX = toX(config.screenDistance)
   const fieldEndScreenX = toX(fieldEndX)
   const screenHalfHeight = config.screenHalfHeight
@@ -2417,12 +2432,18 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           } else {
             const sourceIsHovered = viewMode === 'wavefronts' && sourceIndex === hoveredSource
             const brightWavefrontView = viewMode === 'wavefronts'
+            const dimForGratingSlitHover = config.kind !== 'double-slit'
+              && brightWavefrontView
+              && hoveredSource != null
+              && !sourceIsHovered
             context.strokeStyle = sourceIsHovered
               ? (isTrough ? 'rgba(255, 255, 255, 0.74)' : 'rgba(255, 255, 255, 0.9)')
+              : dimForGratingSlitHover
+                ? (isTrough ? 'rgba(142, 235, 252, 0.1)' : 'rgba(174, 244, 255, 0.16)')
               : brightWavefrontView
                 ? (isTrough ? 'rgba(142, 235, 252, 0.4)' : 'rgba(174, 244, 255, 0.62)')
                 : (isTrough ? 'rgba(134, 230, 248, 0.25)' : 'rgba(155, 239, 253, 0.38)')
-            context.lineWidth = sourceIsHovered ? 1.15 : brightWavefrontView ? 1.5 : 1.35
+            context.lineWidth = sourceIsHovered ? 1.15 : dimForGratingSlitHover ? 1.1 : brightWavefrontView ? 1.5 : 1.35
             context.shadowColor = 'transparent'
             context.shadowBlur = 0
             context.globalAlpha = 1
@@ -3419,15 +3440,15 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
             <line className="trough" x1="76" y1="0" x2="98" y2="0" /><text x="104" y="3">trough</text>
           </g>
         ) : viewMode === 'intensity' ? (
-          <g className="heatmap-key" transform={"translate(" + toX(2.8) + " " + toY(8.42) + ")"}>
-            <rect x="0" y="0" width="112" height="7" fill={"url(#heatmap-key-" + config.kind + ")"} />
-            <text x="0" y="19">low intensity</text><text x="112" y="19" textAnchor="end">high intensity</text>
+          <g className="heatmap-key" transform={"translate(" + fieldLegendX + " " + fieldLegendY + ")"}>
+            <rect x="0" y="0" width="184" height="10" fill={"url(#heatmap-key-" + config.kind + ")"} />
+            <text x="0" y="27">low intensity</text><text x="184" y="27" textAnchor="end">high intensity</text>
           </g>
         ) : viewMode === 'instantaneous' ? (
-          <g className="heatmap-key" transform={"translate(" + toX(2.8) + " " + toY(8.42) + ")"}>
-            <text className="heatmap-key-title" x="0" y="-7">resultant displacement now</text>
-            <rect x="0" y="0" width="160" height="8" fill={"url(#instantaneous-key-" + config.kind + ")"} />
-            <text x="0" y="20">−A · trough</text><text x="80" y="20" textAnchor="middle">0 · equilibrium</text><text x="160" y="20" textAnchor="end">+A · crest</text>
+          <g className="heatmap-key" transform={"translate(" + fieldLegendX + " " + fieldLegendY + ")"}>
+            <text className="heatmap-key-title" x="0" y="-9">resultant displacement now</text>
+            <rect x="0" y="0" width="250" height="10" fill={"url(#instantaneous-key-" + config.kind + ")"} />
+            <text x="0" y="27">−A · trough</text><text x="125" y="27" textAnchor="middle">0 · equilibrium</text><text x="250" y="27" textAnchor="end">+A · crest</text>
           </g>
         ) : null}
 
@@ -4150,7 +4171,7 @@ function InterferenceInvestigation({ kind, onHome }) {
         </div>
 
         <div className="multi-display-bar">
-          <span className="control-label">Field view</span>
+          <span className="control-label">View</span>
           <div className={'view-switcher multi-view-switcher ' + (doubleSlit ? 'four-options' : 'five-options')} role="group" aria-label="Choose field representation">
             {!doubleSlit && <button className={fieldView === 'apparatus-3d' ? 'active' : ''} type="button" onClick={() => setFieldView('apparatus-3d')}>Apparatus 3D</button>}
             {!doubleSlit && <button className={fieldView === 'principal-orders' ? 'active' : ''} type="button" onClick={() => setFieldView('principal-orders')}>Principal orders</button>}
@@ -4309,18 +4330,7 @@ const STANDING_WAVE_DOMAIN = 18
 const STANDING_BEAM_HALF_FRACTION = 0.16
 const STANDING_SOURCE_OSCILLATION = 7.15
 
-function createWaveEmissionHistory(source, frequency, amplitude, phaseOffset) {
-  return [{
-    startTime: 0,
-    startCycles: 0,
-    frequency,
-    amplitude,
-    phaseOffset,
-    source: { ...source },
-  }]
-}
-
-function waveEmissionAt(history, time) {
+function frequencyCyclesAt(history, time) {
   let segment = history[0]
   for (let index = history.length - 1; index >= 0; index -= 1) {
     if (time >= history[index].startTime) {
@@ -4328,85 +4338,19 @@ function waveEmissionAt(history, time) {
       break
     }
   }
-  return {
-    ...segment,
-    source: segment.source,
-    cycles: segment.startCycles + (time - segment.startTime) * segment.frequency,
-  }
+  return segment.startCycles + (time - segment.startTime) * segment.frequency
 }
 
-function recordWaveEmission(history, time, nextState) {
-  const previous = history.at(-1)
-  const unchanged = (
-    Math.abs(previous.frequency - nextState.frequency) < 1e-9
-    && Math.abs(previous.amplitude - nextState.amplitude) < 1e-9
-    && Math.abs(previous.phaseOffset - nextState.phaseOffset) < 1e-9
-    && Math.abs(previous.source.x - nextState.source.x) < 1e-7
-    && Math.abs(previous.source.y - nextState.source.y) < 1e-7
-  )
-  if (unchanged) return
-
-  const startCycles = waveEmissionAt(history, time).cycles
-  const nextSegment = {
-    startTime: time,
-    startCycles,
-    frequency: nextState.frequency,
-    amplitude: nextState.amplitude,
-    phaseOffset: nextState.phaseOffset,
-    source: { ...nextState.source },
+function changeFrequencyAt(history, time, frequency) {
+  const lastSegment = history.at(-1)
+  if (Math.abs(lastSegment.frequency - frequency) < 1e-9) return
+  const startCycles = frequencyCyclesAt(history, time)
+  if (Math.abs(lastSegment.startTime - time) < 1e-9) {
+    lastSegment.frequency = frequency
+    lastSegment.startCycles = startCycles
+    return
   }
-  if (Math.abs(previous.startTime - time) < 1e-9) history[history.length - 1] = nextSegment
-  else history.push(nextSegment)
-
-  const oldestUsefulTime = time - STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED - 2
-  while (history.length > 2 && history[1].startTime < oldestUsefulTime) history.shift()
-}
-
-function travellingWaveSampleAt(history, time, xWorld, direction) {
-  let emissionTime = time
-  let emission = waveEmissionAt(history, emissionTime)
-  for (let iteration = 0; iteration < 8; iteration += 1) {
-    const sourceWorldX = emission.source.x * STANDING_WAVE_DOMAIN
-    const travelDistance = direction * (xWorld - sourceWorldX)
-    if (travelDistance < -1e-5) return null
-    const nextEmissionTime = time - travelDistance / STANDING_WAVE_SPEED
-    if (Math.abs(nextEmissionTime - emissionTime) < 1e-6) break
-    emissionTime = nextEmissionTime
-    emission = waveEmissionAt(history, emissionTime)
-  }
-
-  const sourceWorldX = emission.source.x * STANDING_WAVE_DOMAIN
-  if (direction * (xWorld - sourceWorldX) < -1e-4) return null
-  return {
-    ...emission,
-    emissionTime,
-    phase: -2 * Math.PI * emission.cycles + emission.phaseOffset * Math.PI / 180,
-  }
-}
-
-function timelineStateAt(history, time) {
-  let entry = history[0]
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    if (time >= history[index].startTime) {
-      entry = history[index]
-      break
-    }
-  }
-  return entry.value
-}
-
-function recordTimelineState(history, time, value) {
-  const previous = history.at(-1)
-  if (
-    Math.abs(previous.value.x - value.x) < 1e-7
-    && Math.abs(previous.value.y - value.y) < 1e-7
-  ) return
-  const nextEntry = { startTime: time, value: { ...value } }
-  if (Math.abs(previous.startTime - time) < 1e-9) history[history.length - 1] = nextEntry
-  else history.push(nextEntry)
-
-  const oldestUsefulTime = time - STANDING_WAVE_DOMAIN * 2 / STANDING_WAVE_SPEED - 2
-  while (history.length > 2 && history[1].startTime < oldestUsefulTime) history.shift()
+  history.push({ startTime: time, startCycles, frequency })
 }
 
 function StandingWaveCanvas({
@@ -4430,9 +4374,9 @@ function StandingWaveCanvas({
   const timeRef = useRef(0)
   const dragRef = useRef(null)
   const lastStepSignalRef = useRef(stepSignal)
-  const emissionHistoryRef = useRef({
-    left: createWaveEmissionHistory(leftSource, leftFrequency, leftAmplitude, leftPhaseOffset),
-    right: createWaveEmissionHistory(rightSource, rightFrequency, rightAmplitude, rightPhaseOffset),
+  const frequencyHistoryRef = useRef({
+    left: [{ startTime: 0, startCycles: 0, frequency: leftFrequency }],
+    right: [{ startTime: 0, startCycles: 0, frequency: rightFrequency }],
   })
   const settingsRef = useRef({
     leftSource,
@@ -4448,18 +4392,13 @@ function StandingWaveCanvas({
   })
 
   useEffect(() => {
-    recordWaveEmission(emissionHistoryRef.current.left, timeRef.current, {
-      source: leftSource,
-      frequency: leftFrequency,
-      amplitude: leftAmplitude,
-      phaseOffset: leftPhaseOffset,
-    })
-    recordWaveEmission(emissionHistoryRef.current.right, timeRef.current, {
-      source: rightSource,
-      frequency: rightFrequency,
-      amplitude: rightAmplitude,
-      phaseOffset: rightPhaseOffset,
-    })
+    const previousSettings = settingsRef.current
+    if (Math.abs(leftFrequency - previousSettings.leftFrequency) >= 1e-9) {
+      changeFrequencyAt(frequencyHistoryRef.current.left, timeRef.current, leftFrequency)
+    }
+    if (Math.abs(rightFrequency - previousSettings.rightFrequency) >= 1e-9) {
+      changeFrequencyAt(frequencyHistoryRef.current.right, timeRef.current, rightFrequency)
+    }
     settingsRef.current = {
       leftSource,
       rightSource,
@@ -4544,18 +4483,24 @@ function StandingWaveCanvas({
       const phaseOffsetB = settings.rightPhaseOffset * Math.PI / 180
       const phaseOffsetCyclesA = settings.leftPhaseOffset / 360
       const phaseOffsetCyclesB = settings.rightPhaseOffset / 360
-      const leftEmissionHistory = emissionHistoryRef.current.left
-      const rightEmissionHistory = emissionHistoryRef.current.right
-      const waveSampleAAt = (xWorld) => travellingWaveSampleAt(leftEmissionHistory, time, xWorld, 1)
-      const waveSampleBAt = (xWorld) => travellingWaveSampleAt(rightEmissionHistory, time, xWorld, -1)
+      const leftFrequencyHistory = frequencyHistoryRef.current.left
+      const rightFrequencyHistory = frequencyHistoryRef.current.right
+      const wavePhaseAAt = (xWorld) => {
+        const travelTime = Math.max(0, xWorld - sourceAWorldX) / STANDING_WAVE_SPEED
+        return -2 * Math.PI * frequencyCyclesAt(leftFrequencyHistory, time - travelTime) + phaseOffsetA
+      }
+      const wavePhaseBAt = (xWorld) => {
+        const travelTime = Math.max(0, sourceBWorldX - xWorld) / STANDING_WAVE_SPEED
+        return -2 * Math.PI * frequencyCyclesAt(rightFrequencyHistory, time - travelTime) + phaseOffsetB
+      }
       const coherent = Math.abs(settings.leftFrequency - settings.rightFrequency) < 1e-6
-      const latestLeftEmission = leftEmissionHistory.at(-1)
-      const latestRightEmission = rightEmissionHistory.at(-1)
-      const leftChangeInField = leftEmissionHistory.length > 1
-        && time - latestLeftEmission.startTime < STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED
-      const rightChangeInField = rightEmissionHistory.length > 1
-        && time - latestRightEmission.startTime < STANDING_WAVE_DOMAIN / STANDING_WAVE_SPEED
-      const stableCoherentField = coherent && !leftChangeInField && !rightChangeInField
+      const latestLeftFrequency = leftFrequencyHistory.at(-1)
+      const latestRightFrequency = rightFrequencyHistory.at(-1)
+      const leftFrequencyChangeInField = leftFrequencyHistory.length > 1
+        && time - latestLeftFrequency.startTime < (STANDING_WAVE_DOMAIN - sourceAWorldX) / STANDING_WAVE_SPEED
+      const rightFrequencyChangeInField = rightFrequencyHistory.length > 1
+        && time - latestRightFrequency.startTime < sourceBWorldX / STANDING_WAVE_SPEED
+      const stableCoherentField = coherent && !leftFrequencyChangeInField && !rightFrequencyChangeInField
       const balanced = Math.abs(settings.leftAmplitude - settings.rightAmplitude) < 0.025
       const overlapTop = Math.max(sourceAY - beamHalfHeight, sourceBY - beamHalfHeight)
       const overlapBottom = Math.min(sourceAY + beamHalfHeight, sourceBY + beamHalfHeight)
@@ -4586,37 +4531,29 @@ function StandingWaveCanvas({
       context.stroke()
       context.restore()
 
-      const drawCausalBeam = (sampleAt, colourStops) => {
-        for (let x = left; x <= right; x += 3) {
-          const sample = sampleAt(worldX(x))
-          if (!sample) continue
-          const centreY = toY(sample.source.y)
-          const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
-          gradient.addColorStop(0, colourStops[0])
-          gradient.addColorStop(0.22, colourStops[1])
-          gradient.addColorStop(0.5, colourStops[2])
-          gradient.addColorStop(0.78, colourStops[1])
-          gradient.addColorStop(1, colourStops[0])
-          context.save()
-          context.globalAlpha = 0.25 + 0.75 * clamp(sample.amplitude / 1.5, 0, 1)
-          context.fillStyle = gradient
-          context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
-          context.restore()
-        }
+      const drawBeam = (startX, endX, centreY, colourStops) => {
+        const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
+        gradient.addColorStop(0, colourStops[0])
+        gradient.addColorStop(0.22, colourStops[1])
+        gradient.addColorStop(0.5, colourStops[2])
+        gradient.addColorStop(0.78, colourStops[1])
+        gradient.addColorStop(1, colourStops[0])
+        context.fillStyle = gradient
+        context.fillRect(Math.min(startX, endX), centreY - beamHalfHeight, Math.abs(endX - startX), beamHalfHeight * 2)
       }
 
-      drawCausalBeam(waveSampleAAt, ['rgba(102,221,243,0)', 'rgba(102,221,243,0.035)', 'rgba(102,221,243,0.085)'])
-      drawCausalBeam(waveSampleBAt, ['rgba(255,150,122,0)', 'rgba(255,150,122,0.03)', 'rgba(255,150,122,0.075)'])
+      drawBeam(sourceAX, right, sourceAY, ['rgba(102,221,243,0)', 'rgba(102,221,243,0.035)', 'rgba(102,221,243,0.085)'])
+      drawBeam(left, sourceBX, sourceBY, ['rgba(255,150,122,0)', 'rgba(255,150,122,0.03)', 'rgba(255,150,122,0.075)'])
 
-      const drawPhaseWash = (sampleAt, crestColour, troughColour) => {
+      const drawPhaseWash = (startX, endX, centreY, amplitude, phaseAt, crestColour, troughColour) => {
+        if (amplitude <= 0.01) return
+        const firstX = Math.min(startX, endX)
+        const lastX = Math.max(startX, endX)
+        const amplitudeScale = clamp(amplitude / 1.5, 0, 1)
         context.save()
         context.globalCompositeOperation = 'screen'
-        for (let x = left; x <= right; x += 3) {
-          const sample = sampleAt(worldX(x))
-          if (!sample || sample.amplitude <= 0.01) continue
-          const centreY = toY(sample.source.y)
-          const displacement = Math.sin(sample.phase)
-          const amplitudeScale = clamp(sample.amplitude / 1.5, 0, 1)
+        for (let x = firstX; x <= lastX; x += 3) {
+          const displacement = Math.sin(phaseAt(worldX(x)))
           const strength = Math.abs(displacement) ** 1.65 * amplitudeScale
           const colour = displacement >= 0 ? crestColour : troughColour
           context.fillStyle = `rgba(${colour},${strength * 0.13})`
@@ -4626,55 +4563,56 @@ function StandingWaveCanvas({
       }
 
       drawPhaseWash(
-        waveSampleAAt,
+        sourceAX,
+        right,
+        sourceAY,
+        settings.leftAmplitude,
+        wavePhaseAAt,
         '72, 224, 247',
         '91, 112, 255',
       )
       drawPhaseWash(
-        waveSampleBAt,
+        left,
+        sourceBX,
+        sourceBY,
+        settings.rightAmplitude,
+        wavePhaseBAt,
         '255, 149, 119',
         '220, 80, 160',
       )
 
-      let causalOverlapExists = false
-      for (let x = left; x <= right; x += 4) {
-        const xWorld = worldX(x)
-        const sampleA = waveSampleAAt(xWorld)
-        const sampleB = waveSampleBAt(xWorld)
-        if (!sampleA || !sampleB) continue
-        const centreA = toY(sampleA.source.y)
-        const centreB = toY(sampleB.source.y)
-        const causalOverlapTop = Math.max(centreA - beamHalfHeight, centreB - beamHalfHeight)
-        const causalOverlapBottom = Math.min(centreA + beamHalfHeight, centreB + beamHalfHeight)
-        if (causalOverlapBottom <= causalOverlapTop) continue
-        causalOverlapExists = true
-        const resultant = sampleA.amplitude * Math.sin(sampleA.phase) + sampleB.amplitude * Math.sin(sampleB.phase)
-        const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, sampleA.amplitude + sampleB.amplitude))
-        const overlapGradient = context.createLinearGradient(0, causalOverlapTop, 0, causalOverlapBottom)
+      if (hasOverlap) {
+        const overlapGradient = context.createLinearGradient(0, overlapTop, 0, overlapBottom)
         overlapGradient.addColorStop(0, 'rgba(255,212,122,0)')
-        overlapGradient.addColorStop(0.5, resultant >= 0
-          ? `rgba(255,212,122,${0.025 + strength * 0.16})`
-          : `rgba(183,176,255,${0.018 + strength * 0.12})`)
+        overlapGradient.addColorStop(0.5, 'rgba(255,212,122,0.055)')
         overlapGradient.addColorStop(1, 'rgba(255,212,122,0)')
         context.fillStyle = overlapGradient
-        context.fillRect(x, causalOverlapTop, 4.5, causalOverlapBottom - causalOverlapTop)
-      }
+        context.fillRect(sourceAX, overlapTop, sourceBX - sourceAX, overlapBottom - overlapTop)
 
-      if (hasOverlap) {
+        for (let x = sourceAX; x <= sourceBX; x += 4) {
+          const xWorld = worldX(x)
+          const phaseA = wavePhaseAAt(xWorld)
+          const phaseB = wavePhaseBAt(xWorld)
+          const resultant = settings.leftAmplitude * Math.sin(phaseA) + settings.rightAmplitude * Math.sin(phaseB)
+          const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, settings.leftAmplitude + settings.rightAmplitude))
+          context.fillStyle = resultant >= 0
+            ? `rgba(255, 212, 122, ${0.025 + strength * 0.16})`
+            : `rgba(183, 176, 255, ${0.018 + strength * 0.12})`
+          context.fillRect(x, overlapTop, 4.5, overlapBottom - overlapTop)
+        }
+
         context.save()
-        context.strokeStyle = 'rgba(255, 212, 122, 0.24)'
+        context.strokeStyle = 'rgba(255, 212, 122, 0.42)'
         context.lineWidth = 1
         context.setLineDash([7, 6])
         context.strokeRect(sourceAX, overlapTop, sourceBX - sourceAX, overlapBottom - overlapTop)
         context.restore()
       }
 
-      const drawFront = (front, colour, dashed = false) => {
-        const { x, sample } = front
-        const centreY = toY(sample.source.y)
+      const drawFront = (x, centreY, amplitude, colour, dashed = false) => {
         context.save()
         context.strokeStyle = colour
-        context.globalAlpha = 0.34 + 0.42 * (sample.amplitude / 1.5)
+        context.globalAlpha = 0.34 + 0.42 * (amplitude / 1.5)
         context.lineWidth = dashed ? 1 : 1.65
         context.setLineDash(dashed ? [5, 5] : [])
         context.beginPath()
@@ -4684,43 +4622,45 @@ function StandingWaveCanvas({
         context.restore()
       }
 
-      const findFrontPositions = (sampleAt, phaseTarget) => {
+      const findFrontPositions = (startX, endX, history, phaseOffsetCycles, phaseTarget) => {
+        const direction = Math.sign(endX - startX)
+        const totalDistance = Math.abs(endX - startX)
         const positions = []
-        let previousX = left
-        let previousSample = sampleAt(worldX(previousX))
-        for (let x = left + 2; x <= right + 1; x += 2) {
-          const boundedX = Math.min(x, right)
-          const sample = sampleAt(worldX(boundedX))
-          if (sample && previousSample) {
-            const previousValue = previousSample.phase / (Math.PI * 2) - phaseTarget
-            const value = sample.phase / (Math.PI * 2) - phaseTarget
-            const firstInteger = Math.ceil(Math.min(previousValue, value) - 1e-8)
-            const lastInteger = Math.floor(Math.max(previousValue, value) + 1e-8)
-            for (let integer = firstInteger; integer <= lastInteger; integer += 1) {
-              const denominator = value - previousValue
-              if (Math.abs(denominator) < 1e-9) continue
-              const fraction = (integer - previousValue) / denominator
-              if (fraction <= 1e-6 || fraction > 1 + 1e-6) continue
-              const frontX = previousX + (boundedX - previousX) * fraction
-              const frontSample = sampleAt(worldX(frontX)) ?? sample
-              positions.push({ x: frontX, sample: frontSample })
-            }
+        const cycleValueAt = (x) => {
+          const travelDistance = Math.abs(worldX(x) - worldX(startX))
+          const emissionTime = time - travelDistance / STANDING_WAVE_SPEED
+          return frequencyCyclesAt(history, emissionTime) - phaseOffsetCycles - phaseTarget
+        }
+        let previousX = startX
+        let previousValue = cycleValueAt(startX)
+        for (let distance = 2; distance <= totalDistance + 2; distance += 2) {
+          const boundedDistance = Math.min(distance, totalDistance)
+          const x = startX + direction * boundedDistance
+          const value = cycleValueAt(x)
+          const firstInteger = Math.ceil(Math.min(previousValue, value) - 1e-8)
+          const lastInteger = Math.floor(Math.max(previousValue, value) + 1e-8)
+          for (let integer = firstInteger; integer <= lastInteger; integer += 1) {
+            const denominator = value - previousValue
+            if (Math.abs(denominator) < 1e-9) continue
+            const fraction = (integer - previousValue) / denominator
+            if (fraction <= 1e-6 || fraction > 1 + 1e-6) continue
+            positions.push(previousX + (x - previousX) * fraction)
           }
-          previousX = boundedX
-          previousSample = sample
-          if (boundedX === right) break
+          previousX = x
+          previousValue = value
+          if (boundedDistance === totalDistance) break
         }
         return positions
       }
 
-      const crestPositionsA = findFrontPositions(waveSampleAAt, 0.25)
-      const troughPositionsA = findFrontPositions(waveSampleAAt, 0.75)
-      const crestPositionsB = findFrontPositions(waveSampleBAt, 0.25)
-      const troughPositionsB = findFrontPositions(waveSampleBAt, 0.75)
-      crestPositionsA.forEach((front) => drawFront(front, '#78e7fa'))
-      troughPositionsA.forEach((front) => drawFront(front, '#78e7fa', true))
-      crestPositionsB.forEach((front) => drawFront(front, '#ff9b80'))
-      troughPositionsB.forEach((front) => drawFront(front, '#ff9b80', true))
+      const crestPositionsA = findFrontPositions(sourceAX, right, leftFrequencyHistory, phaseOffsetCyclesA, 0.75)
+      const troughPositionsA = findFrontPositions(sourceAX, right, leftFrequencyHistory, phaseOffsetCyclesA, 0.25)
+      const crestPositionsB = findFrontPositions(sourceBX, left, rightFrequencyHistory, phaseOffsetCyclesB, 0.75)
+      const troughPositionsB = findFrontPositions(sourceBX, left, rightFrequencyHistory, phaseOffsetCyclesB, 0.25)
+      crestPositionsA.forEach((x) => drawFront(x, sourceAY, settings.leftAmplitude, '#78e7fa'))
+      troughPositionsA.forEach((x) => drawFront(x, sourceAY, settings.leftAmplitude, '#78e7fa', true))
+      crestPositionsB.forEach((x) => drawFront(x, sourceBY, settings.rightAmplitude, '#ff9b80'))
+      troughPositionsB.forEach((x) => drawFront(x, sourceBY, settings.rightAmplitude, '#ff9b80', true))
 
       const drawDirection = (x, y, direction, colour, text) => {
         const arrowLength = 54 * direction
@@ -4775,9 +4715,9 @@ function StandingWaveCanvas({
         context.restore()
       }
 
-      const sourceAMotion = Math.sin(-2 * Math.PI * waveEmissionAt(leftEmissionHistory, time).cycles + phaseOffsetA)
+      const sourceAMotion = Math.sin(-2 * Math.PI * frequencyCyclesAt(leftFrequencyHistory, time) + phaseOffsetA)
         * STANDING_SOURCE_OSCILLATION * clamp(settings.leftAmplitude / 1.5, 0, 1)
-      const sourceBMotion = -Math.sin(-2 * Math.PI * waveEmissionAt(rightEmissionHistory, time).cycles + phaseOffsetB)
+      const sourceBMotion = -Math.sin(-2 * Math.PI * frequencyCyclesAt(rightFrequencyHistory, time) + phaseOffsetB)
         * STANDING_SOURCE_OSCILLATION * clamp(settings.rightAmplitude / 1.5, 0, 1)
       drawSource(sourceAX + sourceAMotion, sourceAY, '#78e7fa', 'SOURCE A', 'left')
       drawSource(sourceBX + sourceBMotion, sourceBY, '#ff9b80', 'SOURCE B', 'right')
@@ -4795,7 +4735,7 @@ function StandingWaveCanvas({
       context.fillText('RESULTANT DISPLACEMENT IN THE OVERLAP', left, fieldBottom + 40)
       context.restore()
 
-      if (!causalOverlapExists) {
+      if (!hasOverlap) {
         context.save()
         context.fillStyle = '#ffd47a'
         context.font = '600 13px DM Sans, sans-serif'
@@ -4811,29 +4751,17 @@ function StandingWaveCanvas({
           context.lineWidth = lineWidth
           context.lineJoin = 'round'
           context.beginPath()
-          let drawing = false
           for (let index = 0; index <= sampleCount; index += 1) {
             const x = sourceAX + (index / sampleCount) * (sourceBX - sourceAX)
             const xWorld = worldX(x)
-            const sampleA = waveSampleAAt(xWorld)
-            const sampleB = waveSampleBAt(xWorld)
-            if (!sampleA || !sampleB) {
-              drawing = false
-              continue
-            }
-            const centreA = toY(sampleA.source.y)
-            const centreB = toY(sampleB.source.y)
-            if (Math.abs(centreA - centreB) >= beamHalfHeight * 2) {
-              drawing = false
-              continue
-            }
-            const waveA = sampleA.amplitude * Math.sin(sampleA.phase)
-            const waveB = sampleB.amplitude * Math.sin(sampleB.phase)
+            const phaseA = wavePhaseAAt(xWorld)
+            const phaseB = wavePhaseBAt(xWorld)
+            const waveA = settings.leftAmplitude * Math.sin(phaseA)
+            const waveB = settings.rightAmplitude * Math.sin(phaseB)
             const value = which === 'a' ? waveA : which === 'b' ? waveB : waveA + waveB
             const y = graphMiddle - value * graphScale
-            if (!drawing) context.moveTo(x, y)
+            if (index === 0) context.moveTo(x, y)
             else context.lineTo(x, y)
-            drawing = true
           }
           context.stroke()
           context.restore()
@@ -4849,15 +4777,12 @@ function StandingWaveCanvas({
             for (let index = 0; index <= sampleCount; index += 1) {
               const x = sourceAX + (index / sampleCount) * (sourceBX - sourceAX)
               const xWorld = worldX(x)
-              const sampleA = waveSampleAAt(xWorld)
-              const sampleB = waveSampleBAt(xWorld)
-              if (!sampleA || !sampleB) continue
-              const phaseA = sampleA.phase
-              const phaseB = sampleB.phase
+              const phaseA = wavePhaseAAt(xWorld)
+              const phaseB = wavePhaseBAt(xWorld)
               const envelope = Math.sqrt(
-                sampleA.amplitude ** 2
-                + sampleB.amplitude ** 2
-                + 2 * sampleA.amplitude * sampleB.amplitude * Math.cos(phaseA - phaseB),
+                settings.leftAmplitude ** 2
+                + settings.rightAmplitude ** 2
+                + 2 * settings.leftAmplitude * settings.rightAmplitude * Math.cos(phaseA - phaseB),
               )
               const y = graphMiddle - direction * envelope * graphScale
               if (index === 0) context.moveTo(x, y)
@@ -4897,20 +4822,19 @@ function StandingWaveCanvas({
         drawSpatialWave('b', '#ff9b80', 1.15, 0.46)
         drawSpatialWave('sum', '#ffd47a', 3.2, 1)
 
-        const drawCrestArrows = (direction, positions, colour) => {
+        const drawCrestArrows = (direction, positions, amplitude, colour) => {
+          if (amplitude <= 0.04) return
           context.save()
           context.strokeStyle = colour
           context.fillStyle = colour
           context.globalAlpha = 0.42
           context.lineWidth = 1.1
           let visibleIndex = 0
-          positions.forEach((front) => {
-            const { x, sample } = front
-            if (sample.amplitude <= 0.04) return
+          positions.forEach((x) => {
             if (x < sourceAX + 10 || x > sourceBX - 10) return
             visibleIndex += 1
             if (visibleIndex % 2 === 0) return
-            const y = graphMiddle - sample.amplitude * graphScale - 7
+            const y = graphMiddle - amplitude * graphScale - 7
             const tipX = x + direction * 7
             const tailX = x - direction * 7
             context.beginPath()
@@ -4927,8 +4851,8 @@ function StandingWaveCanvas({
           context.restore()
         }
 
-        drawCrestArrows(1, crestPositionsA, '#78e7fa')
-        drawCrestArrows(-1, crestPositionsB, '#ff9b80')
+        drawCrestArrows(1, crestPositionsA, settings.leftAmplitude, '#78e7fa')
+        drawCrestArrows(-1, crestPositionsB, settings.rightAmplitude, '#ff9b80')
       }
 
       context.save()
@@ -4946,7 +4870,7 @@ function StandingWaveCanvas({
           stableCoherentField
             ? 'dashed curves · fixed amplitude envelope'
           : coherent
-            ? 'the latest source change is propagating through the field'
+            ? 'new frequency propagating through the field'
             : 'different frequencies · relative phase changes continuously',
         right,
         height - 12,
@@ -4995,12 +4919,12 @@ function StandingWaveCanvas({
     const sourceB = sourcePosition(rightSource, pointer.width, pointer.height)
     const settings = settingsRef.current
     const sourceAMotion = Math.sin(
-      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current.left, timeRef.current).cycles
+      -2 * Math.PI * frequencyCyclesAt(frequencyHistoryRef.current.left, timeRef.current)
         + settings.leftPhaseOffset * Math.PI / 180,
     )
       * STANDING_SOURCE_OSCILLATION * clamp(settings.leftAmplitude / 1.5, 0, 1)
     const sourceBMotion = -Math.sin(
-      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current.right, timeRef.current).cycles
+      -2 * Math.PI * frequencyCyclesAt(frequencyHistoryRef.current.right, timeRef.current)
         + settings.rightPhaseOffset * Math.PI / 180,
     )
       * STANDING_SOURCE_OSCILLATION * clamp(settings.rightAmplitude / 1.5, 0, 1)
@@ -5100,18 +5024,28 @@ function SingleSourceReflectionCanvas({
   const timeRef = useRef(0)
   const dragRef = useRef(null)
   const lastStepSignalRef = useRef(stepSignal)
-  const emissionHistoryRef = useRef(createWaveEmissionHistory(source, frequency, amplitude, phaseOffset))
-  const wallHistoryRef = useRef([{ startTime: 0, value: { ...wall } }])
+  const frequencyHistoryRef = useRef([{ startTime: 0, startCycles: 0, frequency }])
+  const reflectionIntervalsRef = useRef(
+    reflectionOverlapFraction(source, wall) > 0 ? [{ startTime: 0, endTime: Infinity }] : [],
+  )
   const settingsRef = useRef({ source, wall, frequency, amplitude, phaseOffset, paused, playbackSpeed })
 
   useEffect(() => {
-    recordWaveEmission(emissionHistoryRef.current, timeRef.current, {
-      source,
-      frequency,
-      amplitude,
-      phaseOffset,
-    })
-    recordTimelineState(wallHistoryRef.current, timeRef.current, wall)
+    const previous = settingsRef.current
+    if (Math.abs(frequency - previous.frequency) >= 1e-9) {
+      changeFrequencyAt(frequencyHistoryRef.current, timeRef.current, frequency)
+    }
+
+    const reflectedBefore = reflectionOverlapFraction(previous.source, previous.wall) > 0
+    const reflectsNow = reflectionOverlapFraction(source, wall) > 0
+    const boundaryMoved = Math.abs(source.x - previous.source.x) > 1e-5 || Math.abs(wall.x - previous.wall.x) > 1e-5
+    const openInterval = reflectionIntervalsRef.current.at(-1)
+    if (reflectedBefore && (!reflectsNow || boundaryMoved) && openInterval?.endTime === Infinity) {
+      openInterval.endTime = timeRef.current
+    }
+    if (reflectsNow && (!reflectedBefore || boundaryMoved)) {
+      reflectionIntervalsRef.current.push({ startTime: timeRef.current, endTime: Infinity })
+    }
 
     settingsRef.current = { source, wall, frequency, amplitude, phaseOffset, paused, playbackSpeed }
     drawRef.current?.(performance.now(), false)
@@ -5176,10 +5110,12 @@ function SingleSourceReflectionCanvas({
       const cavityLength = Math.max(0.01, wallWorldX - sourceWorldX)
       const time = timeRef.current
       const phaseOffsetRadians = settings.phaseOffset * Math.PI / 180
+      const phaseOffsetCycles = settings.phaseOffset / 360
       const overlapFraction = reflectionOverlapFraction(settings.source, settings.wall)
       const aligned = overlapFraction > 0
-      const emissionHistory = emissionHistoryRef.current
-      const wallHistory = wallHistoryRef.current
+      const frequencyHistory = frequencyHistoryRef.current
+      const reflectionIntervals = reflectionIntervalsRef.current
+      const openReflection = reflectionIntervals.at(-1)?.endTime === Infinity ? reflectionIntervals.at(-1) : null
 
       const background = context.createLinearGradient(0, 0, width, height)
       background.addColorStop(0, '#06131e')
@@ -5200,99 +5136,74 @@ function SingleSourceReflectionCanvas({
       context.stroke()
       context.restore()
 
-      const incidentSampleAt = (xWorld, sampleTime = time) => (
-        travellingWaveSampleAt(emissionHistory, sampleTime, xWorld, 1)
-      )
-
-      const reflectedSampleAt = (xWorld, sampleTime = time) => {
-        let reflectionTime = sampleTime
-        let wallAtReflection = timelineStateAt(wallHistory, reflectionTime)
-        for (let iteration = 0; iteration < 8; iteration += 1) {
-          const historicWallWorldX = wallAtReflection.x * STANDING_WAVE_DOMAIN
-          const returnDistance = historicWallWorldX - xWorld
-          if (returnDistance < -1e-5) return null
-          const nextReflectionTime = sampleTime - returnDistance / STANDING_WAVE_SPEED
-          if (Math.abs(nextReflectionTime - reflectionTime) < 1e-6) break
-          reflectionTime = nextReflectionTime
-          wallAtReflection = timelineStateAt(wallHistory, reflectionTime)
+      const reflectionIntervalAt = (reflectionTime) => {
+        for (let index = reflectionIntervals.length - 1; index >= 0; index -= 1) {
+          const interval = reflectionIntervals[index]
+          if (reflectionTime >= interval.startTime && reflectionTime <= interval.endTime) return interval
         }
-
-        const historicWallWorldX = wallAtReflection.x * STANDING_WAVE_DOMAIN
-        if (historicWallWorldX - xWorld < -1e-4) return null
-        const incident = incidentSampleAt(historicWallWorldX, reflectionTime)
-        if (!incident) return null
-        const verticalOverlap = clamp(
-          (STANDING_BEAM_HALF_FRACTION * 2 - Math.abs(incident.source.y - wallAtReflection.y))
-            / (STANDING_BEAM_HALF_FRACTION * 2),
-          0,
-          1,
-        )
-        if (verticalOverlap <= 0) return null
-        return {
-          ...incident,
-          amplitude: incident.amplitude * verticalOverlap,
-          phase: incident.phase + Math.PI,
-          reflectionTime,
-          wall: wallAtReflection,
-        }
+        return null
       }
 
-      const incidentPhaseAt = (xWorld, sampleTime = time) => incidentSampleAt(xWorld, sampleTime)?.phase ?? null
-      const reflectedPhaseAt = (xWorld, sampleTime = time) => reflectedSampleAt(xWorld, sampleTime)?.phase ?? null
-
-      const drawCausalBeam = (sampleAt, startX, endX, colours) => {
-        for (let x = Math.min(startX, endX); x <= Math.max(startX, endX); x += 3) {
-          const sample = sampleAt(worldX(x))
-          if (!sample) continue
-          const centreY = toY(sample.source.y)
-          const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
-          colours.forEach((colour, index) => gradient.addColorStop(index / (colours.length - 1), colour))
-          context.save()
-          context.globalAlpha = 0.25 + 0.75 * clamp(sample.amplitude / 1.5, 0, 1)
-          context.fillStyle = gradient
-          context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
-          context.restore()
-        }
+      const incidentPhaseAt = (xWorld, sampleTime = time) => {
+        const travelTime = Math.max(0, xWorld - sourceWorldX) / STANDING_WAVE_SPEED
+        return -2 * Math.PI * frequencyCyclesAt(frequencyHistory, sampleTime - travelTime) + phaseOffsetRadians
       }
 
-      drawCausalBeam(incidentSampleAt, left, aligned ? wallX : right, [
+      const reflectedPhaseAt = (xWorld) => {
+        if (xWorld > wallWorldX) return null
+        const reflectionTime = time - (wallWorldX - xWorld) / STANDING_WAVE_SPEED
+        if (!reflectionIntervalAt(reflectionTime)) return null
+        return incidentPhaseAt(wallWorldX, reflectionTime) + Math.PI
+      }
+
+      const drawBeam = (startX, endX, centreY, colours) => {
+        const gradient = context.createLinearGradient(0, centreY - beamHalfHeight, 0, centreY + beamHalfHeight)
+        colours.forEach((colour, index) => gradient.addColorStop(index / (colours.length - 1), colour))
+        context.fillStyle = gradient
+        context.fillRect(Math.min(startX, endX), centreY - beamHalfHeight, Math.abs(endX - startX), beamHalfHeight * 2)
+      }
+
+      drawBeam(sourceX, aligned ? wallX : right, sourceY, [
         'rgba(102,221,243,0)',
         'rgba(102,221,243,0.075)',
         'rgba(102,221,243,0.12)',
         'rgba(102,221,243,0.075)',
         'rgba(102,221,243,0)',
       ])
-      drawCausalBeam(reflectedSampleAt, left, right, [
-        'rgba(255,150,122,0)',
-        'rgba(255,150,122,0.055)',
-        'rgba(255,150,122,0.1)',
-        'rgba(255,150,122,0.055)',
-        'rgba(255,150,122,0)',
-      ])
+
+      const reflectedFrontWorldX = openReflection
+        ? wallWorldX - STANDING_WAVE_SPEED * (time - openReflection.startTime)
+        : wallWorldX
+      const reflectedFieldLeftX = toX(clamp(reflectedFrontWorldX / STANDING_WAVE_DOMAIN, 0, settings.wall.x))
+      if (openReflection && reflectedFieldLeftX < wallX) {
+        drawBeam(reflectedFieldLeftX, wallX, sourceY, [
+          'rgba(255,150,122,0)',
+          'rgba(255,150,122,0.055)',
+          'rgba(255,150,122,0.1)',
+          'rgba(255,150,122,0.055)',
+          'rgba(255,150,122,0)',
+        ])
+      }
 
       context.save()
       context.globalCompositeOperation = 'screen'
-      for (let x = left; x <= (aligned ? wallX : right); x += 3) {
-        const sample = incidentSampleAt(worldX(x))
-        if (!sample) continue
-        const centreY = toY(sample.source.y)
-        const displacement = Math.sin(sample.phase)
-        const strength = Math.abs(displacement) ** 1.65 * clamp(sample.amplitude / 1.5, 0, 1)
+      for (let x = sourceX; x <= (aligned ? wallX : right); x += 3) {
+        const displacement = Math.sin(incidentPhaseAt(worldX(x)))
+        const strength = Math.abs(displacement) ** 1.65 * clamp(settings.amplitude / 1.5, 0, 1)
         context.fillStyle = displacement >= 0
           ? `rgba(72,224,247,${strength * 0.13})`
           : `rgba(91,112,255,${strength * 0.13})`
-        context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+        context.fillRect(x, sourceY - beamHalfHeight, 3.5, beamHalfHeight * 2)
       }
-      for (let x = left; x <= right; x += 3) {
-        const sample = reflectedSampleAt(worldX(x))
-        if (!sample) continue
-        const centreY = toY(sample.source.y)
-        const displacement = Math.sin(sample.phase)
-        const strength = Math.abs(displacement) ** 1.65 * clamp(sample.amplitude / 1.5, 0, 1)
+      for (let x = left; x <= wallX; x += 3) {
+        const reflectedPhase = reflectedPhaseAt(worldX(x))
+        if (reflectedPhase === null) continue
+        const displacement = Math.sin(reflectedPhase)
+        const strength = Math.abs(displacement) ** 1.65 * clamp(settings.amplitude / 1.5, 0, 1)
         context.fillStyle = displacement >= 0
           ? `rgba(255,149,119,${strength * 0.12})`
           : `rgba(220,80,160,${strength * 0.11})`
-        context.fillRect(x, centreY - beamHalfHeight, 3.5, beamHalfHeight * 2)
+        context.fillRect(x, sourceY - beamHalfHeight, 3.5, beamHalfHeight * 2)
       }
       context.restore()
 
@@ -5326,48 +5237,40 @@ function SingleSourceReflectionCanvas({
         return positions
       }
 
-      const drawFront = (x, sampleAt, colour, dashed = false) => {
-        const sample = sampleAt(worldX(x))
-        if (!sample) return
-        const centreY = toY(sample.source.y)
+      const drawFront = (x, colour, dashed = false) => {
         context.save()
         context.strokeStyle = colour
-        context.globalAlpha = 0.34 + 0.42 * sample.amplitude / 1.5
+        context.globalAlpha = 0.34 + 0.42 * settings.amplitude / 1.5
         context.lineWidth = dashed ? 1 : 1.65
         context.setLineDash(dashed ? [5, 5] : [])
         context.beginPath()
-        context.moveTo(x, centreY - beamHalfHeight * 0.88)
-        context.lineTo(x, centreY + beamHalfHeight * 0.88)
+        context.moveTo(x, sourceY - beamHalfHeight * 0.88)
+        context.lineTo(x, sourceY + beamHalfHeight * 0.88)
         context.stroke()
         context.restore()
       }
 
       const incidentEndX = aligned ? wallX : right
-      findPhaseFronts(left, incidentEndX, incidentPhaseAt, 0.25).forEach((x) => drawFront(x, incidentSampleAt, '#78e7fa'))
-      findPhaseFronts(left, incidentEndX, incidentPhaseAt, 0.75).forEach((x) => drawFront(x, incidentSampleAt, '#78e7fa', true))
-      const reflectedCrests = findPhaseFronts(right, left, reflectedPhaseAt, 0.25)
-      const reflectedTroughs = findPhaseFronts(right, left, reflectedPhaseAt, 0.75)
-      reflectedCrests.forEach((x) => drawFront(x, reflectedSampleAt, '#ff9b80'))
-      reflectedTroughs.forEach((x) => drawFront(x, reflectedSampleAt, '#ff9b80', true))
+      findPhaseFronts(sourceX, incidentEndX, incidentPhaseAt, 0.25).forEach((x) => drawFront(x, '#78e7fa'))
+      findPhaseFronts(sourceX, incidentEndX, incidentPhaseAt, 0.75).forEach((x) => drawFront(x, '#78e7fa', true))
+      const reflectedCrests = findPhaseFronts(wallX, left, reflectedPhaseAt, 0.25)
+      const reflectedTroughs = findPhaseFronts(wallX, left, reflectedPhaseAt, 0.75)
+      reflectedCrests.forEach((x) => drawFront(x, '#ff9b80'))
+      reflectedTroughs.forEach((x) => drawFront(x, '#ff9b80', true))
 
-      for (let x = left; x <= right; x += 4) {
-          const xWorld = worldX(x)
-          const incidentSample = incidentSampleAt(xWorld)
-          const reflectedSample = reflectedSampleAt(xWorld)
-          if (!incidentSample || !reflectedSample) continue
-          const incidentCentreY = toY(incidentSample.source.y)
-          const reflectedCentreY = toY(reflectedSample.source.y)
-          const causalOverlapTop = Math.max(incidentCentreY - beamHalfHeight, reflectedCentreY - beamHalfHeight)
-          const causalOverlapBottom = Math.min(incidentCentreY + beamHalfHeight, reflectedCentreY + beamHalfHeight)
-          if (causalOverlapBottom <= causalOverlapTop) continue
-          const incident = incidentSample.amplitude * Math.sin(incidentSample.phase)
-          const reflected = reflectedSample.amplitude * Math.sin(reflectedSample.phase)
+      if (aligned) {
+        for (let x = sourceX; x <= wallX; x += 4) {
+          const reflectedPhase = reflectedPhaseAt(worldX(x))
+          if (reflectedPhase === null) continue
+          const incident = settings.amplitude * Math.sin(incidentPhaseAt(worldX(x)))
+          const reflected = settings.amplitude * Math.sin(reflectedPhase)
           const resultant = incident + reflected
-          const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, incidentSample.amplitude + reflectedSample.amplitude))
+          const strength = Math.min(1, Math.abs(resultant) / Math.max(0.01, settings.amplitude * 2))
           context.fillStyle = resultant >= 0
             ? `rgba(255,212,122,${0.025 + strength * 0.16})`
             : `rgba(183,176,255,${0.018 + strength * 0.12})`
-          context.fillRect(x, causalOverlapTop, 4.5, causalOverlapBottom - causalOverlapTop)
+          context.fillRect(x, sourceY - beamHalfHeight, 4.5, beamHalfHeight * 2)
+        }
       }
 
       const drawHorizontalArrow = (x, y, direction, colour, text) => {
@@ -5393,12 +5296,12 @@ function SingleSourceReflectionCanvas({
       }
 
       drawHorizontalArrow(sourceX + 18, sourceY - beamHalfHeight - 35, 1, '#78e7fa', 'INCIDENT')
-      if (reflectedCrests.length || reflectedTroughs.length) {
+      if (reflectionIntervals.some((interval) => time >= interval.startTime)) {
         drawHorizontalArrow(wallX - 18, sourceY + beamHalfHeight + 17, -1, '#ff9b80', 'REFLECTED')
       }
 
       const sourceMotion = Math.sin(
-        -2 * Math.PI * waveEmissionAt(emissionHistory, time).cycles + phaseOffsetRadians,
+        -2 * Math.PI * frequencyCyclesAt(frequencyHistory, time) + phaseOffsetRadians,
       ) * STANDING_SOURCE_OSCILLATION * clamp(settings.amplitude / 1.5, 0, 1)
       context.save()
       context.shadowColor = '#78e7fa'
@@ -5471,16 +5374,9 @@ function SingleSourceReflectionCanvas({
         for (let index = 0; index <= sampleCount; index += 1) {
           const x = sourceX + index / sampleCount * (wallX - sourceX)
           const xWorld = worldX(x)
-          const incidentSample = incidentSampleAt(xWorld)
-          const reflectedSample = reflectedSampleAt(xWorld)
-          if (!incidentSample) {
-            drawing = false
-            continue
-          }
-          const incident = incidentSample.amplitude * Math.sin(incidentSample.phase)
-          const reflected = reflectedSample === null
-            ? null
-            : reflectedSample.amplitude * Math.sin(reflectedSample.phase)
+          const incident = settings.amplitude * Math.sin(incidentPhaseAt(xWorld))
+          const reflectedPhase = reflectedPhaseAt(xWorld)
+          const reflected = reflectedPhase === null ? null : settings.amplitude * Math.sin(reflectedPhase)
           if (which === 'reflected' && reflected === null) {
             drawing = false
             continue
@@ -5502,21 +5398,21 @@ function SingleSourceReflectionCanvas({
       }
 
       let reflectionMessage = 'Wall outside the beam · no reflected wave'
-      const reflectedAtWall = reflectedSampleAt(wallWorldX)
-      const reflectedAtSource = reflectedSampleAt(sourceWorldX)
-      let reflectedFrontWorldX = null
-      for (let index = 0; index <= 120; index += 1) {
-        const sampledWorldX = wallWorldX - index / 120 * cavityLength
-        if (reflectedSampleAt(sampledWorldX)) reflectedFrontWorldX = sampledWorldX
-      }
-      if (reflectedAtWall) {
-        const returnFraction = reflectedFrontWorldX === null
-          ? 0
-          : clamp((wallWorldX - reflectedFrontWorldX) / cavityLength, 0, 1)
-        reflectionMessage = reflectedAtSource
-          ? 'Standing wave established · reflection continues past the source'
-          : `Reflected wave returning · ${Math.round(returnFraction * 100)}% of cavity filled`
-      } else if (reflectedFrontWorldX !== null) {
+      if (aligned && openReflection) {
+        const returnFraction = clamp(
+          STANDING_WAVE_SPEED * (time - openReflection.startTime) / cavityLength,
+          0,
+          1,
+        )
+        reflectionMessage = returnFraction < 1
+          ? `Reflected wave returning · ${Math.round(returnFraction * 100)}% of cavity filled`
+          : 'Standing wave established · reflection continues past the source'
+      } else if (
+        !aligned
+        && reflectionIntervals.length > 0
+        && reflectionIntervals.at(-1).endTime !== Infinity
+        && time - reflectionIntervals.at(-1).endTime < wallWorldX / STANDING_WAVE_SPEED
+      ) {
         reflectionMessage = 'Wall moved out of line · the last reflected wave is leaving'
       }
 
@@ -5575,7 +5471,7 @@ function SingleSourceReflectionCanvas({
     const sourcePosition = objectPosition(source, pointer.width, pointer.height)
     const wallPosition = objectPosition(wall, pointer.width, pointer.height)
     const sourceMotion = Math.sin(
-      -2 * Math.PI * waveEmissionAt(emissionHistoryRef.current, timeRef.current).cycles
+      -2 * Math.PI * frequencyCyclesAt(frequencyHistoryRef.current, timeRef.current)
         + settingsRef.current.phaseOffset * Math.PI / 180,
     ) * STANDING_SOURCE_OSCILLATION * clamp(settingsRef.current.amplitude / 1.5, 0, 1)
     const candidates = [
@@ -5662,7 +5558,6 @@ function StandingWaveExplorer({ onHome }) {
   const [rightSource, setRightSource] = useState(initialRightSource)
   const [singleSource, setSingleSource] = useState(initialSingleSource)
   const [reflectingWall, setReflectingWall] = useState(initialReflectingWall)
-  const [twoSourceResetKey, setTwoSourceResetKey] = useState(0)
   const [singleResetKey, setSingleResetKey] = useState(0)
   const [leftFrequency, setLeftFrequency] = useState(1)
   const [rightFrequency, setRightFrequency] = useState(1)
@@ -5712,7 +5607,6 @@ function StandingWaveExplorer({ onHome }) {
     setRightSource(initialRightSource)
     setSingleSource(initialSingleSource)
     setReflectingWall(initialReflectingWall)
-    setTwoSourceResetKey((value) => value + 1)
     setSingleResetKey((value) => value + 1)
     setLeftFrequency(1)
     setRightFrequency(1)
@@ -5818,7 +5712,6 @@ function StandingWaveExplorer({ onHome }) {
 
             <div className="standing-canvas-wrap">
               <StandingWaveCanvas
-                key={twoSourceResetKey}
                 leftSource={leftSource}
                 rightSource={rightSource}
                 onLeftSourceChange={setLeftSource}
