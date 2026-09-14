@@ -2432,18 +2432,17 @@ function MultiSlitField({ config, selectedAngle, onSelect, paused, playbackSpeed
           } else {
             const sourceIsHovered = viewMode === 'wavefronts' && sourceIndex === hoveredSource
             const brightWavefrontView = viewMode === 'wavefronts'
-            const dimForGratingSlitHover = config.kind !== 'double-slit'
-              && brightWavefrontView
+            const dimForSlitHover = brightWavefrontView
               && hoveredSource != null
               && !sourceIsHovered
             context.strokeStyle = sourceIsHovered
               ? (isTrough ? 'rgba(255, 255, 255, 0.74)' : 'rgba(255, 255, 255, 0.9)')
-              : dimForGratingSlitHover
+              : dimForSlitHover
                 ? (isTrough ? 'rgba(142, 235, 252, 0.1)' : 'rgba(174, 244, 255, 0.16)')
               : brightWavefrontView
                 ? (isTrough ? 'rgba(142, 235, 252, 0.4)' : 'rgba(174, 244, 255, 0.62)')
                 : (isTrough ? 'rgba(134, 230, 248, 0.25)' : 'rgba(155, 239, 253, 0.38)')
-            context.lineWidth = sourceIsHovered ? 1.15 : dimForGratingSlitHover ? 1.1 : brightWavefrontView ? 1.5 : 1.35
+            context.lineWidth = sourceIsHovered ? 1.15 : dimForSlitHover ? 1.1 : brightWavefrontView ? 1.5 : 1.35
             context.shadowColor = 'transparent'
             context.shadowBlur = 0
             context.globalAlpha = 1
