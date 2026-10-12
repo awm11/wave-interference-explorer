@@ -2,7 +2,7 @@
 
 An interactive React collection for UK A-level Physics. It contains investigations for double-slit interference, diffraction gratings and Huygens’ wavelets, with shared animated wave, superposition and point-inspection machinery.
 
-[Open the live simulation](https://awm11.github.io/wave-interference-explorer/)
+[Open the live simulation](https://alexmoorephysics.com/wave-interference-explorer/)
 
 ## Run locally
 
