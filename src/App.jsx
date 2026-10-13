@@ -4795,9 +4795,18 @@ function StandingWaveCanvas({
 
           if (balanced && stableCoherentField && settings.leftAmplitude > 0.04) {
             const midpoint = (sourceAWorldX + sourceBWorldX) / 2
-            const phaseShift = (phaseOffsetCyclesA - phaseOffsetCyclesB) * wavelengthA / 2
+            // Derive the nodes from the same retarded phases used to draw the
+            // component and resultant waves. This preserves any relative phase
+            // accumulated while frequency changes travelled across the field.
+            const midpointPhaseDifference = wavePhaseAAt(midpoint) - wavePhaseBAt(midpoint)
+            const wrappedMidpointPhaseDifference = Math.atan2(
+              Math.sin(midpointPhaseDifference),
+              Math.cos(midpointPhaseDifference),
+            )
             for (let index = -40; index <= 40; index += 1) {
-              const nodeWorldX = midpoint + (index + 0.5) * wavelengthA / 2 - phaseShift
+              const targetPhaseDifference = (2 * index + 1) * Math.PI
+              const nodeWorldX = midpoint
+                + (targetPhaseDifference - wrappedMidpointPhaseDifference) * wavelengthA / (4 * Math.PI)
               if (nodeWorldX <= sourceAWorldX || nodeWorldX >= sourceBWorldX) continue
               const nodeX = screenX(nodeWorldX)
               context.save()
