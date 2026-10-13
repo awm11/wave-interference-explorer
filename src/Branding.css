@@ -1,0 +1,104 @@
+/* awm Physics branding */
+
+.awm-logo-link {
+  display: inline-block;
+  flex: none;
+  line-height: 0;
+  border-radius: 12px;
+  transition: transform 0.2s ease;
+}
+.awm-logo-link:hover,
+.awm-logo-link:focus-visible { transform: scale(1.15) rotate(10deg); }
+.awm-logo-link img {
+  width: 44px;
+  height: 44px;
+  display: block;
+}
+
+/* Investigation pages: logo after the topic name at the right of the header */
+.site-header-end {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+/* Support links: one row, inside the page's footer row */
+.awm-support {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+}
+.awm-contact {
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-decoration: none;
+}
+.awm-contact:hover,
+.awm-contact:focus-visible {
+  color: var(--cyan-bright);
+  text-decoration: underline;
+}
+.awm-more-sims {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+.awm-more-sims:hover,
+.awm-more-sims:focus-visible { color: var(--cyan-bright); }
+.awm-more-sims img {
+  width: 30px;
+  height: 30px;
+  display: block;
+  transition: transform 0.2s ease;
+}
+.awm-more-sims:hover img,
+.awm-more-sims:focus-visible img { transform: scale(1.15) rotate(10deg); }
+
+/* Classes used by BuyMeCoffee.jsx. The embedded button is drawn at a fixed
+   250 × 60, so it is shown at 70% inside a frame of the reduced size. */
+.coffee-embed-frame {
+  flex: none;
+  display: inline-block;
+  width: 175px;
+  height: 42px;
+  line-height: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  transition: transform 0.2s ease;
+}
+.coffee-embed-frame:hover,
+.coffee-embed-frame:focus-within { transform: scale(1.06); }
+.coffee-embed {
+  width: 250px;
+  height: 60px;
+  border: 0;
+  overflow: hidden;
+  transform: scale(0.7);
+  transform-origin: 0 0;
+}
+
+/* Landing page: cards stay centred; the support row sits at the bottom of the page */
+.landing-page.has-support {
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding-bottom: 22px;
+}
+.awm-support.landing-support {
+  justify-content: center;
+  align-self: end;
+  width: 100%;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 760px) {
+  .awm-logo-link img { width: 36px; height: 36px; }
+  .site-header-end { gap: 12px; }
+  .awm-support { justify-content: flex-start; }
+  .awm-support.landing-support { justify-content: center; }
+}

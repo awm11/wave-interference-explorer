@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { BrandLogo, SupportLinks } from './Branding'
 
 const APERTURES = [
   {
@@ -703,7 +704,10 @@ function HuygensExplorer({ onHome }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>Wave Interference Explorer</span>
         </button>
-        <span className="curriculum-tag">Huygens’ wavelets</span>
+        <div className="site-header-end">
+          <span className="curriculum-tag">Huygens’ wavelets</span>
+          <BrandLogo />
+        </div>
       </header>
 
       <section className="intro huygens-intro" id="top">
@@ -990,6 +994,10 @@ function HuygensExplorer({ onHome }) {
         </div>
       </section>
 
+      <footer>
+        <button className="footer-home" type="button" onClick={onHome}>← Choose another investigation</button>
+        <SupportLinks />
+      </footer>
     </main>
   )
 }
@@ -4101,7 +4109,10 @@ function InterferenceInvestigation({ kind, onHome }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>Wave Interference Explorer</span>
         </button>
-        <span className="curriculum-tag">{title}</span>
+        <div className="site-header-end">
+          <span className="curriculum-tag">{title}</span>
+          <BrandLogo />
+        </div>
       </header>
 
       <section className="investigation-intro">
@@ -4319,6 +4330,7 @@ function InterferenceInvestigation({ kind, onHome }) {
 
       <footer>
         <button className="footer-home" type="button" onClick={onHome}>← Choose another investigation</button>
+        <SupportLinks />
       </footer>
     </main>
   )
@@ -5634,7 +5646,10 @@ function StandingWaveExplorer({ onHome }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <span>Wave Interference Explorer</span>
         </button>
-        <span className="curriculum-tag">Standing waves</span>
+        <div className="site-header-end">
+          <span className="curriculum-tag">Standing waves</span>
+          <BrandLogo />
+        </div>
       </header>
 
       <section className="investigation-intro">
@@ -5829,6 +5844,7 @@ function StandingWaveExplorer({ onHome }) {
 
       <footer>
         <button className="footer-home" type="button" onClick={onHome}>← Choose another investigation</button>
+        <SupportLinks />
       </footer>
     </main>
   )
@@ -5955,7 +5971,7 @@ function ModuleArtwork({ type }) {
 
 function LandingPage({ onOpen }) {
   return (
-    <main className="landing-page">
+    <main className="landing-page has-support">
       <div className="landing-content">
         <header className="landing-header">
           <span className="landing-mark" aria-hidden="true"><i /><i /><i /></span>
@@ -5981,6 +5997,7 @@ function LandingPage({ onOpen }) {
           ))}
         </div>
       </div>
+      <SupportLinks className="landing-support" />
     </main>
   )
 }
